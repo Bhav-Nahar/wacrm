@@ -55,9 +55,17 @@ interface WhatsAppMessage {
    * to advance the per-contact run.
    */
   interactive?: {
-    type: 'button_reply' | 'list_reply'
+    type: 'button_reply' | 'list_reply' | 'nfm_reply'
     button_reply?: { id: string; title: string }
     list_reply?: { id: string; title: string; description?: string }
+    /**
+     * Set when the customer SUBMITS a native WhatsApp Flow (form).
+     * `response_json` is a JSON *string* — Meta does not nest it as an
+     * object — holding every field they filled in, plus an echo of the
+     * `flow_token` we sent. `body` is the localized "Sent" line Meta
+     * shows in the chat where the submission would be.
+     */
+    nfm_reply?: { name?: string; body?: string; response_json?: string }
   }
   /**
    * Set when the customer taps a QUICK_REPLY button on a *template*
@@ -650,7 +658,7 @@ async function processMessage(
   }
 
   // Parse message content based on type
-  const { contentText, mediaUrl, mediaType, interactiveReplyId } =
+  const { contentText, mediaUrl, mediaType, interactiveReplyId, formResponse } =
     await parseMessageContent(
       message,
       accessToken,
@@ -813,8 +821,19 @@ async function processMessage(
     userId: configOwnerUserId,
     contactId: contactRecord.id,
     conversationId: conversation.id,
-    message:
-      interactiveReplyId
+    message: formResponse
+      ? {
+          kind: 'form_reply',
+          response: formResponse,
+          // Meta echoes the flow_token we sent (the flow_run id) back
+          // inside response_json.
+          flow_token:
+            typeof formResponse.flow_token === 'string'
+              ? formResponse.flow_token
+              : null,
+          meta_message_id: message.id,
+        }
+      : interactiveReplyId
         ? {
             kind: 'interactive_reply',
             reply_id: interactiveReplyId,
@@ -891,7 +910,17 @@ async function processMessage(
   // the account has enabled it. Awaited inside `after()` (same reason as
   // the webhook dispatch below); `dispatchInboundToAiReply` owns its
   // eligibility gates + try/catch and never throws.
-  if (!flowConsumed && !interactiveReplyId && inboundText.trim()) {
+  //
+  // A native Flow submission is excluded for the same reason a button
+  // tap is: its `contentText` is Meta's "Sent" line, not a question.
+  // Without the guard the LLM would answer that boilerplate as if the
+  // customer had typed it.
+  if (
+    !flowConsumed &&
+    !interactiveReplyId &&
+    !formResponse &&
+    inboundText.trim()
+  ) {
     await dispatchInboundToAiReply({
       accountId,
       conversationId: conversation.id,
@@ -934,6 +963,14 @@ async function parseMessageContent(
    * tap with the right affordance. Null for everything else.
    */
   interactiveReplyId: string | null
+  /**
+   * For a native WhatsApp Flow submission (`nfm_reply`): the decoded
+   * `response_json`, i.e. every field the customer filled in. Null for
+   * everything else — including a Flow whose response_json is
+   * unparseable, which we log and treat as a plain message rather than
+   * dropping the customer's reply on the floor.
+   */
+  formResponse: Record<string, unknown> | null
 }> {
   // getMediaUrl signature is (mediaId, accessToken) — earlier code had
   // the args swapped, so every verification hit an invalid Meta URL and
@@ -991,6 +1028,7 @@ async function parseMessageContent(
     mediaUrl: null,
     mediaType: null,
     interactiveReplyId: null,
+    formResponse: null,
   }
 
   switch (message.type) {
@@ -1080,6 +1118,39 @@ async function parseMessageContent(
       // Use the human-readable title as contentText so the inbox bubble
       // renders the tap legibly ("Existing customer"), and stash the
       // stable id separately so the Flows engine can route on it.
+      // A native Flow (form) submission arrives here too, under its own
+      // `nfm_reply` envelope. Every field the customer filled in comes
+      // as a JSON *string* in `response_json`.
+      const nfm = message.interactive?.nfm_reply
+      if (nfm) {
+        let parsed: Record<string, unknown> | null = null
+        try {
+          const raw: unknown = JSON.parse(nfm.response_json ?? '{}')
+          // Guard the array case explicitly — `typeof [] === 'object'`,
+          // and spreading an array into vars would produce "0", "1"…
+          // keys rather than field names.
+          if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+            parsed = raw as Record<string, unknown>
+          }
+        } catch (error) {
+          // Malformed JSON from Meta is not something we can fix, and
+          // throwing would make Meta retry the whole delivery. Log it
+          // and let the message land in the inbox unparsed so a human
+          // still sees that the customer submitted something.
+          console.error(
+            '[webhook] nfm_reply response_json was not valid JSON:',
+            error instanceof Error ? error.message : error
+          )
+        }
+        return {
+          ...empty,
+          // Meta's own "Sent"/form-name line, so the thread shows what
+          // happened rather than an empty bubble.
+          contentText: nfm.body || nfm.name || '[Form submitted]',
+          formResponse: parsed,
+        }
+      }
+
       const reply =
         message.interactive?.button_reply ?? message.interactive?.list_reply
       if (reply?.id) {

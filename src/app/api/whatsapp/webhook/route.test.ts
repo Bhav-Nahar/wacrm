@@ -390,6 +390,108 @@ describe('inbound webhook: template quick-reply buttons (#478)', () => {
   })
 })
 
+describe('inbound webhook: native Flow submissions (nfm_reply)', () => {
+  // A customer submitting a native WhatsApp Flow. Meta delivers the
+  // answers as a JSON *string* in `response_json`, echoing back the
+  // flow_token we set when sending (the flow_run id).
+  const formSubmission = {
+    id: 'wamid.FORM1',
+    from: '15551230000',
+    timestamp: '1700000000',
+    type: 'interactive',
+    interactive: {
+      type: 'nfm_reply',
+      nfm_reply: {
+        name: 'flow',
+        body: 'Sent',
+        response_json:
+          '{"flow_token":"run-abc","name":"Priya","email":"p@example.com"}',
+      },
+    },
+  }
+
+  it('routes the submission to flows as a form_reply', async () => {
+    await runWebhook(formSubmission)
+
+    expect(h.dispatchInboundToFlows).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: {
+          kind: 'form_reply',
+          response: {
+            flow_token: 'run-abc',
+            name: 'Priya',
+            email: 'p@example.com',
+          },
+          flow_token: 'run-abc',
+          meta_message_id: 'wamid.FORM1',
+        },
+      }),
+    )
+  })
+
+  it('stores it as an interactive message with no reply id', async () => {
+    await runWebhook(formSubmission)
+
+    expect(h.state.upsertCalls[0].row).toMatchObject({
+      content_type: 'interactive',
+      content_text: 'Sent',
+      // A form submission is not a tap on one of our options.
+      interactive_reply_id: null,
+    })
+  })
+
+  it('does not hand a form submission to the AI auto-reply', async () => {
+    await runWebhook(formSubmission)
+    expect(h.dispatchInboundToAiReply).not.toHaveBeenCalled()
+  })
+
+  it('survives malformed response_json rather than dropping the message', async () => {
+    await runWebhook({
+      ...formSubmission,
+      interactive: {
+        ...formSubmission.interactive,
+        nfm_reply: {
+          ...formSubmission.interactive.nfm_reply,
+          response_json: '{not valid json',
+        },
+      },
+    })
+
+    // Still recorded for the human in the inbox...
+    expect(h.state.upsertCalls[0].row).toMatchObject({
+      content_type: 'interactive',
+      content_text: 'Sent',
+    })
+    // ...but not routed as a form_reply, since there is nothing to capture.
+    expect(h.dispatchInboundToFlows).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ kind: 'text' }),
+      }),
+    )
+  })
+
+  it('ignores a response_json that decodes to an array, not an object', async () => {
+    // Spreading an array into flow vars would produce "0"/"1" keys
+    // instead of field names.
+    await runWebhook({
+      ...formSubmission,
+      interactive: {
+        ...formSubmission.interactive,
+        nfm_reply: {
+          ...formSubmission.interactive.nfm_reply,
+          response_json: '["Priya","p@example.com"]',
+        },
+      },
+    })
+
+    expect(h.dispatchInboundToFlows).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ kind: 'text' }),
+      }),
+    )
+  })
+})
+
 describe('inbound webhook: inbound media is mirrored (#466)', () => {
   const IMAGE_MESSAGE = {
     id: 'wamid.IMG1',

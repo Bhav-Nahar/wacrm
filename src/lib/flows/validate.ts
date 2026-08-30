@@ -532,6 +532,92 @@ function validateNode(
       break;
     }
 
+    case "send_form": {
+      const cfg = node.config as {
+        body_text?: string;
+        meta_flow_id?: string;
+        cta_label?: string;
+        screen_id?: string;
+        var_prefix?: string;
+        next_node_key?: string;
+      };
+      if (!cfg.body_text?.trim()) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "body_text",
+          message: "Send-form needs body text above the button.",
+        });
+      }
+      if (!cfg.meta_flow_id?.trim()) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "meta_flow_id",
+          message:
+            "Send-form needs the Flow id from Meta's Flow Builder.",
+        });
+      }
+      if (!cfg.screen_id?.trim()) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "screen_id",
+          message:
+            "Send-form needs the entry screen id of the Flow (e.g. WELCOME).",
+        });
+      }
+      if (!cfg.cta_label?.trim()) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "cta_label",
+          message: "Send-form needs a label for the button that opens it.",
+        });
+      } else if (cfg.cta_label.length > 20) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "cta_label",
+          message: `Button label "${cfg.cta_label}" exceeds Meta's 20-character limit.`,
+        });
+      }
+      // Prefix becomes part of a var name, so it has to survive
+      // interpolation as `{{prefix_field}}`.
+      if (cfg.var_prefix && !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(cfg.var_prefix)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "var_prefix",
+          message: `var_prefix "${cfg.var_prefix}" must be alphanumeric+underscore and start with a letter or underscore.`,
+        });
+      }
+      if (!cfg.next_node_key) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "next_node_key",
+          message: "Send-form must point to a next node.",
+        });
+      } else if (!knownKeys.has(cfg.next_node_key)) {
+        issues.push({
+          severity: "error",
+          scope: "node",
+          node_key: node.node_key,
+          field: "next_node_key",
+          message: `Send-form points to non-existent node "${cfg.next_node_key}".`,
+        });
+      }
+      break;
+    }
+
     case "collect_input": {
       const cfg = node.config as {
         prompt_text?: string;
@@ -751,6 +837,7 @@ function outgoingEdges(node: NodeInput): string[] {
     case "send_message":
     case "send_media":
     case "collect_input":
+    case "send_form":
     case "set_tag": {
       const cfg = node.config as { next_node_key?: string };
       return cfg.next_node_key ? [cfg.next_node_key] : [];

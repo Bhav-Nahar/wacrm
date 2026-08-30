@@ -1189,7 +1189,15 @@
         "filenamePlaceholder": "invoice.pdf",
         "advanceAfterSending": "전송 후 다음 진행",
         "pickNextNode": "다음 노드를 선택하세요…",
-        "none": "— 없음 —"
+        "none": "— 없음 —",
+        "headerText": "헤더 (선택, 60자)",
+        "metaFlowIdLabel": "플로우 ID",
+        "metaFlowIdHint": "Meta 플로우 빌더에서 플로우를 게시한 뒤 ID를 복사하세요.",
+        "screenIdLabel": "시작 화면 ID",
+        "ctaLabelLabel": "버튼 라벨",
+        "afterSubmit": "고객이 제출한 후 이동할 노드",
+        "varPrefixLabel": "변수 접두사 (선택)",
+        "varPrefixHint": "제출된 각 필드 이름 앞에 붙습니다. 한 플로우에서 같은 필드를 두 번 수집할 때 사용하세요."
       },
       "categories": {
         "messaging": "메시징",
@@ -1267,7 +1275,8 @@
       "modeAdd": "추가",
       "modeRemove": "제거",
       "tagPicked": "{tag} 태그 {mode}…",
-      "tagNone": "태그 {mode} (선택된 태그 없음)"
+      "tagNone": "태그 {mode} (선택된 태그 없음)",
+      "noFlowId": "플로우 ID 없음"
     }
   },
   "Settings": {

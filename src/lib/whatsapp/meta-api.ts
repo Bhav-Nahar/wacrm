@@ -1006,6 +1006,106 @@ export async function sendInteractiveList(
   return { messageId: data.messages[0].id }
 }
 
+export interface SendFlowMessageArgs {
+  phoneNumberId: string
+  accessToken: string
+  to: string
+  /** Body text shown above the CTA button. */
+  bodyText: string
+  /** The published Flow's id, copied from Meta's Flow Builder. */
+  flowId: string
+  /** Label on the button that opens the form (≤ 20 chars, like a reply button). */
+  ctaLabel: string
+  /** First screen of the Flow to open, e.g. "WELCOME". */
+  screenId: string
+  /**
+   * Opaque string Meta echoes back on `nfm_reply`. We set it to the
+   * flow_run id so the submission can be correlated to a run even if
+   * the contact has since started another conversation.
+   */
+  flowToken: string
+  headerText?: string
+  footerText?: string
+  contextMessageId?: string
+}
+
+/**
+ * Send a native WhatsApp Flow — the form sheet that opens inside the
+ * customer's WhatsApp client. One message replaces the collect_input
+ * chain: the customer fills every field in one sitting and Meta
+ * delivers all the answers in a single `nfm_reply` webhook.
+ *
+ * `flow_action: 'navigate'` is the static variant: the Flow's screens
+ * are fully defined in Meta's Flow Builder and need no callback from
+ * us. The dynamic variant ('data_exchange') requires a registered RSA
+ * keypair and a decrypting endpoint — deliberately not supported here.
+ *
+ * ponytail: static flows only. Add data_exchange when a customer needs
+ * dropdowns populated from live data or server-side validation.
+ */
+export async function sendFlowMessage(
+  args: SendFlowMessageArgs
+): Promise<MetaSendResult> {
+  const {
+    phoneNumberId, accessToken, to, bodyText, flowId, ctaLabel,
+    screenId, flowToken, headerText, footerText, contextMessageId,
+  } = args
+  validateInteractiveBody(bodyText)
+  validateInteractiveHeaderFooter(headerText, footerText)
+  if (!flowId) throw new Error('Flow message requires a flowId.')
+  if (!screenId) throw new Error('Flow message requires a screenId.')
+  if (!flowToken) throw new Error('Flow message requires a flowToken.')
+  if (!ctaLabel) throw new Error('Flow message requires a ctaLabel.')
+  // Meta enforces the same 20-char ceiling here as on reply buttons.
+  if (ctaLabel.length > INTERACTIVE_LIMITS.buttonTitleMaxLength) {
+    throw new Error(
+      `Flow CTA label "${ctaLabel}" exceeds ${INTERACTIVE_LIMITS.buttonTitleMaxLength} chars.`
+    )
+  }
+
+  const interactive: Record<string, unknown> = {
+    type: 'flow',
+    body: { text: bodyText },
+    action: {
+      name: 'flow',
+      parameters: {
+        flow_message_version: '3',
+        flow_token: flowToken,
+        flow_id: flowId,
+        flow_cta: ctaLabel,
+        flow_action: 'navigate',
+        flow_action_payload: { screen: screenId },
+      },
+    },
+  }
+  if (headerText) interactive.header = { type: 'text', text: headerText }
+  if (footerText) interactive.footer = { text: footerText }
+
+  const body: Record<string, unknown> = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'interactive',
+    interactive,
+  }
+  if (contextMessageId) body.context = { message_id: contextMessageId }
+
+  const url = `${META_API_BASE}/${phoneNumberId}/messages`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = await response.json()
+  return { messageId: data.messages[0].id }
+}
+
 function validateInteractiveBody(bodyText: string): void {
   if (!bodyText) throw new Error('Interactive message requires bodyText.')
   if (bodyText.length > INTERACTIVE_LIMITS.bodyMaxLength) {

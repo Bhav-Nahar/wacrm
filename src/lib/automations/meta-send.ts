@@ -95,6 +95,14 @@ export async function engineSendInteractive(
       buttons: payload.buttons,
     })
   }
+  // Native Flow (form) payloads are authored on a flow's send_form
+  // node and sent by `engineSendForm`. An automation step has no way to
+  // produce one — reject rather than mis-send it as a list.
+  if (payload.kind !== 'list') {
+    throw new Error(
+      `engineSendInteractive cannot send payload kind "${payload.kind}".`,
+    )
+  }
   return engineSendInteractiveList({
     ...common,
     bodyText: payload.body,

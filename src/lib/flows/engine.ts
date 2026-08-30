@@ -34,6 +34,7 @@
 
 import { supabaseAdmin } from "./admin-client";
 import {
+  engineSendForm,
   engineSendInteractiveButtons,
   engineSendInteractiveList,
   engineSendMedia,
@@ -53,6 +54,7 @@ import {
   type FlowRunRow,
   type ParsedInbound,
   type SendButtonsNodeConfig,
+  type SendFormNodeConfig,
   type SendListNodeConfig,
   type SendMediaNodeConfig,
   type SendMessageNodeConfig,
@@ -129,9 +131,34 @@ export function matchesKeywordTrigger(
  */
 export function entryTriggerTexts(message: ParsedInbound): string[] {
   if (message.kind === "text") return [message.text];
+  // A form submission carries no tappable id or label — it is the
+  // ANSWER to a prompt an already-running flow sent, never a phrase
+  // that should start a new one. Returning nothing keeps a keyword
+  // trigger from matching on a customer's own form data.
+  if (message.kind === "form_reply") return [];
   return [...new Set([message.reply_title, message.reply_id])].filter(
     (v): v is string => Boolean(v && v.trim()),
   );
+}
+
+/**
+ * Turn a native Flow submission into flow vars.
+ *
+ * Two things make this more than a spread: Meta echoes the `flow_token`
+ * we sent back inside `response_json` (bookkeeping, not an answer the
+ * author asked for), and two forms in one flow both collecting "email"
+ * would otherwise clobber each other — hence the optional prefix.
+ */
+export function captureFormVars(
+  response: Record<string, unknown>,
+  prefix = "",
+): Record<string, unknown> {
+  const captured: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(response)) {
+    if (key === "flow_token") continue;
+    captured[`${prefix}${key}`] = value;
+  }
+  return captured;
 }
 
 /** Nodes that advance to a next_node_key without waiting for input. */
@@ -150,6 +177,7 @@ export function isSuspending(node_type: string): boolean {
   return (
     node_type === "send_buttons" ||
     node_type === "send_list" ||
+    node_type === "send_form" ||
     node_type === "collect_input"
   );
 }
@@ -409,6 +437,46 @@ async function sendButtonsAndSuspend(
   });
   // Look up our internal message id so we can stash it on the run.
   // Cheap — indexed on `messages.message_id`.
+  const { data: msg } = await db
+    .from("messages")
+    .select("id")
+    .eq("message_id", whatsapp_message_id)
+    .maybeSingle();
+  await db
+    .from("flow_runs")
+    .update({
+      last_prompt_message_id: (msg as { id: string } | null)?.id ?? null,
+    })
+    .eq("id", run.id);
+  return { outcome: "advanced", node_key: node.node_key };
+}
+
+async function sendFormAndSuspend(
+  db: AdminClient,
+  run: FlowRunRow,
+  node: FlowNodeRow,
+): Promise<{ outcome: "advanced"; node_key: string }> {
+  const cfg = node.config as unknown as SendFormNodeConfig;
+  const { whatsapp_message_id } = await engineSendForm({
+    accountId: run.account_id,
+    userId: run.user_id,
+    conversationId: run.conversation_id!,
+    contactId: run.contact_id!,
+    bodyText: interpolateVars(cfg.body_text, run.vars),
+    metaFlowId: cfg.meta_flow_id,
+    ctaLabel: cfg.cta_label,
+    screenId: cfg.screen_id,
+    // The run id round-trips through Meta as flow_token, so a
+    // submission can be tied back to the run that asked for it.
+    flowToken: run.id,
+    headerText: cfg.header_text,
+    footerText: cfg.footer_text,
+  });
+  await logEvent(db, run.id, "message_sent", node.node_key, {
+    node_type: "send_form",
+    whatsapp_message_id,
+    meta_flow_id: cfg.meta_flow_id,
+  });
   const { data: msg } = await db
     .from("messages")
     .select("id")
@@ -853,6 +921,21 @@ async function advanceFromNodeKey(
       }
       return { outcome: "advanced" };
     }
+    if (node.node_type === "send_form") {
+      await sendFormAndSuspend(db, run, node);
+      const advanced = await advanceCurrentNodeKey(
+        db,
+        run.id,
+        run.current_node_key,
+        node.node_key,
+      );
+      if (!advanced) {
+        await logEvent(db, run.id, "error", node.node_key, {
+          reason: "lost_race_during_advance",
+        });
+      }
+      return { outcome: "advanced" };
+    }
     if (node.node_type === "send_list") {
       await sendListAndSuspend(db, run, node);
       const advanced = await advanceCurrentNodeKey(
@@ -1004,6 +1087,10 @@ async function handleReplyForActiveRun(
     reply_kind: message.kind,
     reply_id: message.kind === "interactive_reply" ? message.reply_id : null,
     text_length: message.kind === "text" ? message.text.length : null,
+    // Field NAMES only — the submitted values are customer PII and the
+    // event log is not the place for them. They live in flow_runs.vars.
+    form_fields:
+      message.kind === "form_reply" ? Object.keys(message.response) : null,
   });
 
   if (!run.current_node_key) {
@@ -1035,6 +1122,30 @@ async function handleReplyForActiveRun(
       currentNode.node_type === "send_list")
   ) {
     matched = matchReplyId(currentNode, message.reply_id);
+  } else if (
+    message.kind === "form_reply" &&
+    currentNode.node_type === "send_form"
+  ) {
+    const cfg = currentNode.config as unknown as SendFormNodeConfig;
+    // A form submission is a collect_input capture with N keys instead
+    // of one. Meta only delivers nfm_reply after a real submit, so
+    // there is no partial-fill case to guard against — but it can be
+    // an empty object if every screen was informational, which still
+    // counts as "the customer got through the form".
+    const captured = captureFormVars(message.response, cfg.var_prefix ?? "");
+    const newVars = { ...run.vars, ...captured };
+    const { error: capErr } = await db
+      .from("flow_runs")
+      .update({ vars: newVars, reprompt_count: 0 })
+      .eq("id", run.id);
+    if (!capErr) {
+      run.vars = newVars;
+      run.reprompt_count = 0;
+      await logEvent(db, run.id, "node_entered", currentNode.node_key, {
+        captured_keys: Object.keys(captured),
+      });
+      matched = cfg.next_node_key;
+    }
   } else if (
     message.kind === "text" &&
     currentNode.node_type === "collect_input"
@@ -1114,6 +1225,11 @@ async function handleReplyForActiveRun(
       await sendButtonsAndSuspend(db, run, currentNode);
     } else if (currentNode.node_type === "send_list") {
       await sendListAndSuspend(db, run, currentNode);
+    } else if (currentNode.node_type === "send_form") {
+      // Customer typed instead of opening the form. Re-send it — the
+      // original message's button still works, but a fresh prompt is
+      // the nudge they need and matches how the other nodes reprompt.
+      await sendFormAndSuspend(db, run, currentNode);
     } else if (currentNode.node_type === "collect_input") {
       // Customer typed something we couldn't accept (empty after trim,
       // or var_key missing — rare). Re-send the prompt so they try again.

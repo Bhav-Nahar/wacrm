@@ -68,9 +68,23 @@ export interface InteractiveListPayload {
   sections: InteractiveListSection[]
 }
 
+export interface InteractiveFormPayload {
+  kind: 'form'
+  body: string
+  header?: string
+  footer?: string
+  /** Label on the button that opens the Flow sheet (≤ 20 chars). */
+  cta_label: string
+  /** The published Flow's id in Meta's Flow Builder. */
+  meta_flow_id: string
+  /** Entry screen the CTA opens. */
+  screen_id: string
+}
+
 export type InteractiveMessagePayload =
   | InteractiveButtonsPayload
   | InteractiveListPayload
+  | InteractiveFormPayload
 
 export type InteractiveValidation =
   | { ok: true }

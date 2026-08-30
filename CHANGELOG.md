@@ -9,6 +9,55 @@ Versions follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Pre-1.0, `MINOR` bumps cover new modules; `PATCH` bumps cover bug fixes
 and polish.
 
+## [0.10.0] — 2026-08-31
+
+Native WhatsApp Flows: collect a form's worth of answers in one
+message instead of six.
+
+> **Migration required:** apply `supabase/migrations/043_flow_send_form.sql`
+> (adds `send_form` to the `flow_nodes.node_type` CHECK).
+
+### Added
+
+- **`send_form` flow node — native WhatsApp Flows.** Publish a Flow in
+  Meta's Flow Builder, paste its ID into the node, and the bot sends
+  one message whose button opens a real form sheet inside WhatsApp:
+  text fields, dropdowns, date pickers, multiple screens, validated
+  before submit. Meta delivers every answer in a single `nfm_reply`
+  webhook, which lands in `flow_runs.vars` exactly like a
+  `collect_input` capture — so conditions, handoff notes, and every
+  other downstream node read it unchanged.
+
+  Replaces a chain of `collect_input` prompts, which asked one question
+  per message and gave the customer six chances to wander off.
+
+  An optional variable prefix keeps two forms in one flow from
+  overwriting each other's fields, and Meta's echoed `flow_token` is
+  stripped rather than stored as an answer.
+
+  Static Flows only — `flow_action: navigate`. Dynamic Flows
+  (`data_exchange`, for dropdowns populated from live data or
+  server-side validation) need a registered RSA keypair and a
+  decrypting endpoint, and are deliberately out of scope.
+
+  No `whatsapp_forms` registry table: like every other node, the config
+  lives in `flow_nodes.config` JSONB. Reusing one form across flows
+  means pasting the ID again — cheaper than a table with RLS, routes,
+  and a settings screen.
+
+### Fixed
+
+- **AI auto-reply no longer answers Meta's boilerplate.** The gate
+  excluded interactive taps but not form submissions, whose message
+  text is Meta's localized "Sent" line — the LLM would have replied to
+  that as though the customer had typed it. Found by the test written
+  alongside the feature.
+
+- **CI now verifies migration 042 actually applied.** Its column is
+  `ADD COLUMN IF NOT EXISTS` and its backfill a plain `UPDATE`, the
+  exact shape `verify-schema.sql` exists to catch, and it shipped
+  without an assertion.
+
 ## [0.9.0] — 2026-08-30
 
 Inbox triage: the customer can see you read them, you can see who is

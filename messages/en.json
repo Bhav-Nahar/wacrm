@@ -1189,7 +1189,15 @@
         "filenamePlaceholder": "invoice.pdf",
         "advanceAfterSending": "After sending, advance to",
         "pickNextNode": "Pick a next node…",
-        "none": "— None —"
+        "none": "— None —",
+        "headerText": "Header (optional, 60 chars)",
+        "metaFlowIdLabel": "Flow ID",
+        "metaFlowIdHint": "From Meta's Flow Builder — publish the Flow, then copy its ID.",
+        "screenIdLabel": "Entry screen ID",
+        "ctaLabelLabel": "Button label",
+        "afterSubmit": "After the customer submits, advance to",
+        "varPrefixLabel": "Variable prefix (optional)",
+        "varPrefixHint": "Prepended to every submitted field name. Use it when two forms in one flow collect the same field."
       },
       "categories": {
         "messaging": "Messaging",
@@ -1267,7 +1275,8 @@
       "modeAdd": "Add",
       "modeRemove": "Remove",
       "tagPicked": "{mode} tag {tag}…",
-      "tagNone": "{mode} tag (none picked)"
+      "tagNone": "{mode} tag (none picked)",
+      "noFlowId": "No Flow ID set"
     }
   },
   "Settings": {
