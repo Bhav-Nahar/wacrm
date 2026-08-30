@@ -144,7 +144,8 @@
   },
   "Inbox": {
     "page": {
-      "whatsappNotConnected": "WhatsApp® is not connected. Go to Settings to connect your account."
+      "whatsappNotConnected": "WhatsApp® is not connected. Go to Settings to connect your account.",
+      "closeFailed": "Failed to close the conversation"
     },
     "conversationList": {
       "searchPlaceholder": "Search conversations...",
@@ -162,7 +163,11 @@
       "unknown": "Unknown",
       "filterBot": "Bot",
       "botBadge": "Bot",
-      "botHandling": "A bot flow is running in this conversation"
+      "botHandling": "A bot flow is running in this conversation",
+      "filterWaiting": "Waiting",
+      "filterMine": "Assigned to me",
+      "filterUnassigned": "Unassigned",
+      "waitingSince": "Waiting {duration} for a reply"
     },
     "messageThread": {
       "backToConversations": "Back to conversations",
@@ -354,7 +359,11 @@
       "toastFailedDelete": "Failed to delete contact",
       "toastDeleted": "Contact deleted",
       "toastBulkFailedDelete": "Failed to delete contacts",
-      "toastBulkDeleted": "{count} contacts deleted"
+      "toastBulkDeleted": "{count} contacts deleted",
+      "exportBtn": "Export",
+      "toastExportEmpty": "Nothing to export",
+      "toastExportFailed": "Failed to export contacts",
+      "toastExportCapped": "Exported the first {count} contacts — narrow the filters to export the rest"
     },
     "form": {
       "addTitle": "Add Contact",

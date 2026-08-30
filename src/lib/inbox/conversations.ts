@@ -78,3 +78,21 @@ export function matchesContactFilters(
 
   return true;
 }
+
+/**
+ * Whether the customer spoke last and is still waiting on a reply.
+ *
+ * Deliberately NOT `unread_count > 0`: opening a thread zeroes the
+ * unread count, so a message an agent read and then forgot to answer
+ * would look handled. `last_message_from` survives being read — that
+ * gap is the whole point of the "Waiting" filter.
+ *
+ * Closed threads are excluded: someone decided they were done, and a
+ * customer's "thanks!" shouldn't drag them back into the queue.
+ */
+export function isWaitingOnUs(conversation: Conversation): boolean {
+  return (
+    conversation.last_message_from === "customer" &&
+    conversation.status !== "closed"
+  );
+}

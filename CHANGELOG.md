@@ -9,6 +9,43 @@ Versions follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Pre-1.0, `MINOR` bumps cover new modules; `PATCH` bumps cover bug fixes
 and polish.
 
+## [0.9.0] — 2026-08-30
+
+Inbox triage: the customer can see you read them, you can see who is
+still waiting, and the keyboard does the walking.
+
+> **Migration required:** apply `supabase/migrations/042_conversation_last_message_from.sql`
+> (adds `conversations.last_message_from` plus the trigger that keeps it
+> current, and backfills it from existing messages).
+
+### Added
+
+- **Read receipts (blue ticks).** Opening a thread now tells Meta the
+  customer's messages were read, so their ticks turn blue. Previously we
+  consumed Meta's read events for our own outbound messages but never
+  sent one, leaving every customer on grey ticks forever. Fire-and-
+  forget via `POST /api/whatsapp/read`; Meta's own refusals (message
+  older than 30 days, already read) are swallowed rather than shown.
+- **"Waiting" filter and an unanswered-for badge.** A conversation whose
+  newest message came from the customer shows an amber ⏱ badge with how
+  long they have been waiting, and the inbox filter menu gains
+  **Waiting**. Unlike the unread count, this survives an agent opening
+  the thread — the read-but-never-answered conversation is exactly the
+  one that used to disappear. Backed by the new
+  `conversations.last_message_from`, maintained by a DB trigger so every
+  send path (webhook, flows, automations, public API) keeps it current
+  for free.
+- **"Assigned to me" and "Unassigned" inbox filters.** The two questions
+  every shared inbox opens with, previously answerable only by clicking
+  through threads one at a time.
+- **Inbox keyboard shortcuts.** `j` / `k` move down and up the visible
+  list, `/` jumps to search, `Esc` leaves it, `e` closes the open
+  thread. Inert while typing a message.
+- **Contacts CSV export.** An **Export** button next to Import writes
+  every contact matching the current search and tag filters — not just
+  the visible page — using the same columns the importer reads, so the
+  file round-trips. Capped at 5 000 rows with a warning toast.
+
 ## [0.8.1] — 2026-07-10
 
 Fixes inbound chats fragmenting into multiple threads for the same

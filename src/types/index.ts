@@ -172,6 +172,10 @@ export interface Conversation {
   assigned_agent_id?: string;
   last_message_text?: string;
   last_message_at?: string;
+  /** sender_type of the newest message. `'customer'` means the thread is
+   *  waiting on us. Maintained by a DB trigger (migration 042) — never
+   *  write it from application code. */
+  last_message_from?: 'customer' | 'agent' | 'bot';
   unread_count: number;
   created_at: string;
   updated_at: string;

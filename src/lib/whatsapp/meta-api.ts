@@ -704,6 +704,47 @@ export async function sendReactionMessage(
 }
 
 // ============================================================
+// Read receipts
+// ============================================================
+
+export interface MarkMessageReadArgs {
+  phoneNumberId: string
+  accessToken: string
+  /** Meta's `wamid.*` id of an INBOUND message. */
+  messageId: string
+}
+
+/**
+ * Turn the customer's ticks blue.
+ *
+ * Meta marks the given inbound message *and everything before it* in
+ * that thread as read, so callers only ever need to send the newest
+ * inbound wamid — there is no need to walk the backlog.
+ *
+ * Returns nothing: the call is best-effort UX, and the only failure
+ * modes are "the message is older than 30 days" or "already read",
+ * neither of which the caller can act on.
+ */
+export async function markMessageRead(args: MarkMessageReadArgs): Promise<void> {
+  const { phoneNumberId, accessToken, messageId } = args
+  const response = await fetch(`${META_API_BASE}/${phoneNumberId}/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      status: 'read',
+      message_id: messageId,
+    }),
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+}
+
+// ============================================================
 // Interactive (button replies + list messages)
 // ============================================================
 //

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  isWaitingOnUs,
   matchesContactFilters,
   normalizeConversation,
 } from "./conversations";
@@ -141,5 +142,33 @@ describe("normalizeConversation", () => {
     };
     // A contactless row passes through untouched (consumers use `?.`).
     expect(normalizeConversation(raw).contact).toBeNull();
+  });
+});
+
+describe("isWaitingOnUs", () => {
+  const conv = (over: Partial<Conversation>): Conversation => ({
+    ...makeConversation(null),
+    ...over,
+  });
+
+  it("flags a thread where the customer spoke last", () => {
+    expect(isWaitingOnUs(conv({ last_message_from: "customer" }))).toBe(true);
+  });
+
+  it("ignores threads we or the bot answered", () => {
+    expect(isWaitingOnUs(conv({ last_message_from: "agent" }))).toBe(false);
+    expect(isWaitingOnUs(conv({ last_message_from: "bot" }))).toBe(false);
+  });
+
+  it("ignores closed threads even when the customer spoke last", () => {
+    // Someone decided this was done; a trailing "thanks!" shouldn't
+    // drag it back into the queue.
+    expect(
+      isWaitingOnUs(conv({ last_message_from: "customer", status: "closed" })),
+    ).toBe(false);
+  });
+
+  it("ignores rows predating the column (no messages, or not backfilled)", () => {
+    expect(isWaitingOnUs(conv({}))).toBe(false);
   });
 });
