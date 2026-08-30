@@ -56,6 +56,18 @@ export function resolveFallbackPolicy(
       r.on_exhaust === "handoff" || r.on_exhaust === "end"
         ? r.on_exhaust
         : DEFAULT_FALLBACK_POLICY.on_exhaust,
+    on_timeout:
+      r.on_timeout === "handoff" || r.on_timeout === "end"
+        ? r.on_timeout
+        : DEFAULT_FALLBACK_POLICY.on_timeout,
+    nudge_hours:
+      typeof r.nudge_hours === "number" && r.nudge_hours > 0
+        ? r.nudge_hours
+        : DEFAULT_FALLBACK_POLICY.nudge_hours,
+    nudge_text:
+      typeof r.nudge_text === "string" && r.nudge_text.trim()
+        ? r.nudge_text
+        : DEFAULT_FALLBACK_POLICY.nudge_text,
   };
 }
 

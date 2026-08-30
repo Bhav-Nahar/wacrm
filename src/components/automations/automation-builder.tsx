@@ -116,6 +116,7 @@ const STEP_META: Record<AutomationStepType, StepMeta> = {
   assign_conversation: { label: "assign_conversation", icon: UserCheck, border: "border-l-primary" },
   update_contact_field: { label: "update_contact_field", icon: PencilLine, border: "border-l-primary" },
   create_deal: { label: "create_deal", icon: Briefcase, border: "border-l-primary" },
+  move_deal_stage: { label: "move_deal_stage", icon: Briefcase, border: "border-l-primary" },
   wait: { label: "wait", icon: Hourglass, border: "border-l-border" },
   condition: { label: "condition", icon: GitBranch, border: "border-l-amber-500" },
   send_webhook: { label: "send_webhook", icon: Webhook, border: "border-l-primary" },
@@ -132,11 +133,17 @@ const ADDABLE_STEPS: AutomationStepType[] = [
   "assign_conversation",
   "update_contact_field",
   "create_deal",
+  "move_deal_stage",
   "wait",
   "condition",
   "send_webhook",
   "close_conversation",
 ]
+
+// Roles offerable for round-robin assignment. `viewer` is absent on purpose:
+// a viewer cannot reply, so assigning them a conversation parks it. Kept in
+// step with DEFAULT_ASSIGNABLE_ROLES in src/lib/automations/assign-agent.ts.
+const ASSIGNABLE_ROLE_OPTIONS = ["owner", "admin", "agent"] as const
 
 const TRIGGER_OPTIONS: { value: AutomationTriggerType }[] = [
   { value: "new_message_received" },
@@ -189,6 +196,8 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
       return { field: "name", value: "" }
     case "create_deal":
       return { pipeline_id: "", stage_id: "", title: "", value: 0 }
+    case "move_deal_stage":
+      return { pipeline_id: "", stage_id: "", create_title: "", value: 0 }
     case "wait":
       return { amount: 1, unit: "hours" }
     case "condition":
@@ -1368,6 +1377,60 @@ function StepEditor({
               />
             </FieldBlock>
           )}
+          {cfg.mode !== "specific" && (
+            <>
+              <FieldBlock label={t("config.assignRolesLabel")}>
+                <div className="space-y-1.5">
+                  {ASSIGNABLE_ROLE_OPTIONS.map((role) => {
+                    // An absent list means "not configured" and the engine
+                    // applies its default — so an unconfigured step shows
+                    // every box ticked, matching what will actually happen.
+                    const selected =
+                      (cfg.roles as string[] | undefined) ??
+                      ASSIGNABLE_ROLE_OPTIONS
+                    const checked = selected.includes(role)
+                    return (
+                      <label
+                        key={role}
+                        className="flex items-center gap-2 text-sm text-foreground"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() =>
+                            set({
+                              roles: checked
+                                ? selected.filter((r) => r !== role)
+                                : [...selected, role],
+                            })
+                          }
+                          className="size-4 rounded border-border"
+                        />
+                        {t(`config.assignRoles.${role}`)}
+                      </label>
+                    )
+                  })}
+                </div>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  {t("config.assignRolesHint")}
+                </p>
+              </FieldBlock>
+              <FieldBlock label={t("config.onlineOnlyLabel")}>
+                <label className="flex items-center gap-2 text-sm text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(cfg.online_only)}
+                    onChange={(e) => set({ online_only: e.target.checked })}
+                    className="size-4 rounded border-border"
+                  />
+                  {t("config.onlineOnly")}
+                </label>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  {t("config.onlineOnlyHint")}
+                </p>
+              </FieldBlock>
+            </>
+          )}
         </>
       )
     case "update_contact_field":
@@ -1411,6 +1474,24 @@ function StepEditor({
               type="number"
               value={(cfg.value as number) ?? 0}
               onChange={(e) => set({ value: Number(e.target.value) })}
+              className="bg-muted text-foreground"
+            />
+          </FieldBlock>
+        </>
+      )
+    case "move_deal_stage":
+      return (
+        <>
+          <DealPipelineFields
+            pipelineId={(cfg.pipeline_id as string) ?? ""}
+            stageId={(cfg.stage_id as string) ?? ""}
+            onChange={(patch) => set(patch)}
+            t={t}
+          />
+          <FieldBlock label={t("config.createTitleLabel")}>
+            <Input
+              value={(cfg.create_title as string) ?? ""}
+              onChange={(e) => set({ create_title: e.target.value })}
               className="bg-muted text-foreground"
             />
           </FieldBlock>

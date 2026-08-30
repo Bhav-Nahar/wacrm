@@ -15,7 +15,7 @@
     "createAccount": "Create account"
   },
   "Sidebar": {
-    "title": "CRM Template for WhatsApp",
+    "title": "Pinzo",
     "dashboard": "Dashboard",
     "inbox": "Inbox",
     "notifications": "Notifications",
@@ -130,6 +130,16 @@
     },
     "emptyState": {
       "title": "Not enough data yet"
+    },
+    "firstRun": {
+      "title": "Finish setting up",
+      "description": "Three steps and your first campaign can go out.",
+      "connectWhatsapp": "Connect WhatsApp",
+      "connectWhatsappHint": "Link your WhatsApp Business number so you can send and receive.",
+      "addContacts": "Add your contacts",
+      "addContactsHint": "Import a CSV or add someone by hand.",
+      "sendFirst": "Send your first message",
+      "sendFirstHint": "Start a broadcast to see the whole thing work end to end."
     }
   },
   "Inbox": {
@@ -149,7 +159,10 @@
       "clearAll": "Clear all",
       "noConversations": "No conversations found",
       "noMessagesYet": "No messages yet",
-      "unknown": "Unknown"
+      "unknown": "Unknown",
+      "filterBot": "Bot",
+      "botBadge": "Bot",
+      "botHandling": "A bot flow is running in this conversation"
     },
     "messageThread": {
       "backToConversations": "Back to conversations",
@@ -302,7 +315,7 @@
   "Contacts": {
     "page": {
       "title": "Contacts",
-      "subtitle": "Manage your contact list. {count} total contacts.",
+      "subtitle": "Manage your contact list. {count, plural, =0 {No contacts yet} one {1 contact} other {# contacts}}.",
       "subtitleZero": "Manage your contact list.",
       "customFieldsBtn": "Custom fields",
       "importBtn": "Import",
@@ -384,9 +397,9 @@
         "custom": "Custom Fields",
         "deals": "Deals",
         "tags": "Tags",
-      "noTags": "No tags",
-      "noDeals": "No deals",
-      "addNotePlaceholder": "Add a note..."
+        "noTags": "No tags",
+        "noDeals": "No deals",
+        "addNotePlaceholder": "Add a note..."
       },
       "actions": {
         "edit": "Edit",
@@ -870,7 +883,8 @@
         "wait": "Wait",
         "condition": "Condition (If/Else)",
         "send_webhook": "Send Webhook",
-        "close_conversation": "Close Conversation"
+        "close_conversation": "Close Conversation",
+        "move_deal_stage": "Move Deal Stage"
       },
       "triggers": {
         "new_message_received": {
@@ -978,6 +992,16 @@
           "specific": "Specific agent"
         },
         "agentLabel": "Agent",
+        "assignRolesLabel": "Assign to",
+        "assignRoles": {
+          "owner": "Owners",
+          "admin": "Admins",
+          "agent": "Agents"
+        },
+        "assignRolesHint": "Viewers are never assigned — they cannot reply. With nothing ticked, everyone who can reply is included.",
+        "onlineOnlyLabel": "Availability",
+        "onlineOnly": "Only assign to members who are online",
+        "onlineOnlyHint": "When nobody is online, the conversation is left unassigned and stays visible to the whole team in the inbox.",
         "fieldLabel": "Field",
         "valueLabel": "Value",
         "placeholderValue": "Text or {{ vars.x }} / {{ message.text }}",
@@ -1010,7 +1034,8 @@
         "matchWord": "Whole word",
         "matchWordHint": "Matches the keyword only as a standalone word, so \"k\" no longer fires on \"thanks\". Best for short keywords in space-separated languages; use Contains for languages written without spaces.",
         "matchExact": "Exact",
-        "closeConversationHint": "Sets the conversation status to \"closed\". No configuration needed."
+        "closeConversationHint": "Sets the conversation status to \"closed\". No configuration needed.",
+        "createTitleLabel": "Title (if no deal exists yet)"
       }
     }
   },
@@ -1369,13 +1394,11 @@
       "deleteLocallyAria": "Delete template locally",
       "deleteMetaLocallyTitle": "Delete from Meta and locally",
       "deleteLocallyTitle": "Delete locally",
-      
       "dialogEditTitle": "Edit Message Template",
       "dialogNewTitle": "New Message Template",
       "dialogEditDesc": "Save your changes to re-submit to Meta. Status will flip back to PENDING during review.",
       "dialogNewDesc": "Build a template and submit it to Meta for approval. Once approved, you can use it in broadcasts and the inbox.",
       "authWarning": "AUTHENTICATION templates have a fixed body + OTP button shape that needs a different builder. Create them in Meta WhatsApp Manager for now and use <bold>Sync from Meta</bold> to bring them in.",
-      
       "templateName": "Template Name",
       "namePlaceholder": "e.g. order_confirmation",
       "nameFixed": "Name is fixed once a template exists on Meta — create a new template to change it.",
@@ -1384,7 +1407,6 @@
       "language": "Language",
       "langFixed": "Language is fixed once a template exists on Meta.",
       "langHint": "Must match the exact code on Meta — <code>en_US</code> and <code>en</code> are distinct.",
-      
       "header": "Header",
       "headerNone": "None",
       "headerText": "Text",
@@ -1394,7 +1416,6 @@
       "headerTextPlaceholder": "Header text (max 60 chars, optional {{1}})",
       "headerSampleAria": "Sample value for header variable",
       "headerSamplePlaceholder": "Sample value for {{1}} (required for Meta review)",
-      
       "uploadImage": "Upload image",
       "uploadHint": "JPEG or PNG, ≤5 MB",
       "mediaUrlPlaceholder": "https://… (or paste a public {format} link)",
@@ -1402,17 +1423,14 @@
       "mediaHint": "Must be a publicly accessible HTTPS link. Meta fetches it once during review, so it needs to stay live for ~24 hrs.",
       "videoHint": " Recommended: MP4 / 3GPP, ≤16 MB, ≤60 seconds.",
       "documentHint": " Recommended: PDF, ≤100 MB.",
-      
       "bodyText": "Body Text",
       "bodyPlaceholder": "Hello {{1}}, your order {{2}} is confirmed.",
       "bodyHint": "Use {{1}}, {{2}} for variables (must be contiguous starting at {{1}}).",
       "sampleValues": "Sample values (Meta uses these to review your template)",
       "sampleAria": "Sample value for body variable {var}",
       "samplePlaceholder": "Sample for {var}",
-      
       "footer": "Footer (optional)",
       "footerPlaceholder": "Optional footer text (max 60 chars)",
-      
       "buttons": "Buttons (optional)",
       "addButton": "Add Button",
       "buttonsLimit": "Up to {max} buttons. QUICK_REPLY buttons must come before URL / phone / copy-code buttons.",
@@ -1425,19 +1443,16 @@
       "urlSamplePlaceholder": "Example value for {{1}} (required when URL has a variable)",
       "phonePlaceholder": "+15551234567",
       "codePlaceholder": "Example code (e.g. SUMMER20)",
-      
       "cancel": "Cancel",
       "saving": "Saving…",
       "submitting": "Submitting…",
       "saveResubmit": "Save & Resubmit",
       "submitApproval": "Submit for Approval",
-      
       "deleteDialogTitle": "Delete template?",
       "deleteMetaDesc": "\"{name}\" will be deleted from Meta and from wacrm. Active broadcasts using this template will start failing on their next send. This can't be undone.",
       "deleteLocalDesc": "\"{name}\" will be deleted from wacrm. It was never submitted to Meta, so no remote cleanup is needed.",
       "deleting": "Deleting…",
       "delete": "Delete",
-      
       "toastLoadFailed": "Failed to load templates",
       "toastSubmitFailed": "Failed to submit",
       "toastSubmitEditSuccess": "Edit submitted — Meta typically reviews within 24 hours.",
@@ -1536,7 +1551,16 @@
       "step4_3": "Paste the <strong class=\"text-foreground\">Webhook Callback URL</strong> from above",
       "step4_4": "Enter the same <strong class=\"text-foreground\">Verify Token</strong> you set here",
       "step4_5": "Subscribe to \"messages\" webhook field",
-      "metaDocs": "Meta WhatsApp API Documentation"
+      "metaDocs": "Meta WhatsApp API Documentation",
+      "embeddedSignupTitle": "1-Click Meta Embedded Signup",
+      "embeddedSignupDesc": "Connect your WhatsApp Business Account in seconds via Meta's official popup without manually copying tokens.",
+      "connectWithMeta": "Connect WhatsApp with Meta",
+      "reconnectWithMeta": "Reconnect with Meta",
+      "connecting": "Connecting...",
+      "connectInstructions": "Click the button to open Meta's secure onboarding popup. Select your WhatsApp Business Account and phone number.",
+      "esNotConfigured": "To enable 1-Click Embedded Signup, set WHATSAPP_ES_CONFIG_ID, META_APP_ID, and META_APP_SECRET in your environment variables.",
+      "manualSetupTitle": "Manual / Advanced Configuration",
+      "manualSetupDesc": "Manually configure WhatsApp credentials, test numbers, or custom system tokens."
     },
     "sections": {
       "overview": "Overview",
@@ -1549,6 +1573,7 @@
       "fields": "Fields & tags",
       "deals": "Deals & currency",
       "members": "Team members",
+      "assignment": "Team & assignment",
       "api": "API keys"
     },
     "groups": {
@@ -1583,7 +1608,6 @@
       "profileSaved": "Profile saved",
       "emailChangeFailed": "Email change failed: {message}",
       "profileSavedEmailCheck": "Profile saved — check your email to confirm the address change",
-      
       "passwordTitle": "Password",
       "passwordDesc": "Use at least {min} characters. You will stay signed in on this device after changing it.",
       "currentPassword": "Current password",
@@ -1597,7 +1621,6 @@
       "currentPasswordIncorrect": "Current password is incorrect",
       "passwordUpdateFailed": "Password update failed: {message}",
       "passwordUpdated": "Password updated",
-      
       "sessionsTitle": "Active sessions",
       "sessionsDesc": "Sign out of every device where you're logged in — including this one. Useful if you lost a laptop or shared your password.",
       "signOutAll": "Sign out of all devices",
@@ -1737,6 +1760,28 @@
       "reindex": "Reindex",
       "reindexTooltip": "Re-embed all documents (e.g. after adding an embeddings key)",
       "loading": "Loading…"
+    },
+    "assignment": {
+      "title": "Team & assignment",
+      "description": "How incoming conversations are shared out across your team.",
+      "roundRobinTitle": "Round-robin assignment",
+      "roundRobinDesc": "When an automation assigns a conversation automatically, it goes to whoever currently has the fewest open conversations.",
+      "rolesLabel": "Assign to",
+      "roles": {
+        "owner": "Owners",
+        "admin": "Admins",
+        "agent": "Agents"
+      },
+      "rolesHint": "Viewers are never assigned — they cannot reply. With nothing ticked, everyone who can reply is included.",
+      "availabilityLabel": "Availability",
+      "onlineOnly": "Only assign to members who are online",
+      "onlineOnlyHint": "When nobody is online, the conversation is left unassigned and stays visible to the whole team in the inbox.",
+      "overrideNote": "This is the account default. An individual automation's “Assign conversation” step can set its own rules and will override what you choose here.",
+      "adminOnlyHint": "Only owners and admins can change these settings.",
+      "save": "Save changes",
+      "saving": "Saving…",
+      "saveSuccess": "Assignment settings saved.",
+      "saveFailed": "Could not save assignment settings."
     }
   }
 }

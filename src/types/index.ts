@@ -157,6 +157,13 @@ export interface ContactNote {
 
 export type ConversationStatus = 'open' | 'pending' | 'closed';
 
+/**
+ * True while a Flow run is actively driving this conversation. Derived from
+ * the embedded `flow_runs` on read (see `normalizeConversation`) rather than
+ * stored — the bot is not a fourth ConversationStatus, it is a thing that is
+ * currently happening to an open one.
+ */
+
 export interface Conversation {
   id: string;
   user_id: string;
@@ -169,6 +176,8 @@ export interface Conversation {
   created_at: string;
   updated_at: string;
   contact?: Contact;
+  /** See the note above ConversationStatus. Derived on read, never stored. */
+  bot_active?: boolean;
   /**
    * AI auto-reply state for this thread (migration 029 + 033):
    *  - `ai_autoreply_disabled` — the bot is paused here (a human took
@@ -477,6 +486,7 @@ export type AutomationStepType =
   | 'assign_conversation'
   | 'update_contact_field'
   | 'create_deal'
+  | 'move_deal_stage'
   | 'wait'
   | 'condition'
   | 'send_webhook'
@@ -546,6 +556,22 @@ export interface TagStepConfig {
 export interface AssignConversationStepConfig {
   mode: 'specific' | 'round_robin';
   agent_id?: string;
+  /**
+   * Which roles are eligible for round-robin. Omitted on configs saved before
+   * this was configurable, which is why the engine defaults rather than
+   * requiring it — those automations must keep behaving sensibly.
+   *
+   * `viewer` is accepted here but pointless: a viewer cannot reply, so
+   * assigning them a conversation parks it.
+   */
+  roles?: AccountRole[];
+  /**
+   * Skip members whose presence heartbeat has gone stale. When every eligible
+   * member is offline nothing is assigned — the conversation stays in the
+   * shared inbox where the whole team can still see it, rather than landing on
+   * someone who logged off on Friday.
+   */
+  online_only?: boolean;
 }
 
 export interface UpdateContactFieldStepConfig {
@@ -565,6 +591,28 @@ export interface CreateDealStepConfig {
   pipeline_id: string;
   stage_id: string;
   title: string;
+  value?: number;
+}
+
+/**
+ * Move the contact's open deal into `stage_id`, creating one if they have
+ * none yet.
+ *
+ * `create_deal` is a blind insert, which makes stage automation
+ * append-only: a contact who first qualifies as lost and later comes back
+ * with real intent ends up holding two contradictory deals. This step is
+ * the move-or-create the pipeline actually needs — a returning lead is
+ * moved, a new one is opened.
+ *
+ * Scoped to `status='open'` deals: a won or lost deal is history, and
+ * dragging a closed deal back into an active stage would rewrite it.
+ * `create_title` is used only on the create path.
+ */
+export interface MoveDealStageStepConfig {
+  pipeline_id: string;
+  stage_id: string;
+  /** Title for the deal when none exists yet and one has to be created. */
+  create_title: string;
   value?: number;
 }
 
@@ -602,6 +650,7 @@ export type AutomationStepConfig =
   | AssignConversationStepConfig
   | UpdateContactFieldStepConfig
   | CreateDealStepConfig
+  | MoveDealStageStepConfig
   | WaitStepConfig
   | ConditionStepConfig
   | SendWebhookStepConfig

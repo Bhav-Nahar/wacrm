@@ -41,6 +41,7 @@ import {
 } from "./meta-send";
 import { decideFallback, resolveFallbackPolicy } from "./fallback";
 import { addContactTagAndDispatch } from "@/lib/contacts/tag-events";
+import { pickRoundRobinAgent } from "@/lib/automations/assign-agent";
 import { removeContactTag } from "@/lib/contacts/tag-write";
 import {
   type CollectInputNodeConfig,
@@ -464,26 +465,92 @@ async function sendListAndSuspend(
   return { outcome: "advanced", node_key: node.node_key };
 }
 
+/**
+ * Hand a conversation to a human: assign it, open it, silence the AI, and
+ * leave the bot's note where the inbox will show it.
+ *
+ * Status is `open`, not `pending`. `pending` here used to mean "needs a
+ * human", which is backwards from how every helpdesk reads it — pending is
+ * waiting on the *customer*. An assigned conversation that needs an answer
+ * is open, and an agent filtering for open work should see it.
+ *
+ * Assignment is also what makes the handoff visible at all: the
+ * `on_conversation_assigned` trigger (migration 027) raises a notification
+ * the moment `assigned_agent_id` changes. Handing off without assigning
+ * leaves a thread nobody is told about — the exact failure this prevents.
+ *
+ * Returns the chosen assignee so callers can log it.
+ */
+export async function handOffConversationToHuman(args: {
+  db: AdminClient;
+  accountId: string;
+  conversationId: string | null;
+  /** Interpolated note for the inbox banner. */
+  note?: string | null;
+  /** Explicit assignee; falls back to round-robin when absent or invalid. */
+  assignTo?: string;
+}): Promise<string | undefined> {
+  const { db, accountId, conversationId, note = null, assignTo } = args;
+
+  let assignee = assignTo;
+  if (!assignee) {
+    try {
+      assignee = await pickRoundRobinAgent(
+        db as unknown as Parameters<typeof pickRoundRobinAgent>[0],
+        accountId,
+        {},
+      );
+    } catch (err) {
+      // Never let assignment failure block the handoff — an unassigned open
+      // conversation still beats a run wedged mid-flow.
+      console.warn(
+        "[flows] round-robin assignment failed during handoff:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  if (!conversationId) return assignee;
+
+  const update: Record<string, unknown> = {
+    status: "open",
+    updated_at: new Date().toISOString(),
+    ai_handoff_summary: note,
+    // Escalating to a human means the AI must stop, or the auto-reply bot
+    // answers the customer's next message and undoes the handoff. It is
+    // also what makes AiThreadBanner render the note.
+    ai_autoreply_disabled: true,
+  };
+  if (assignee) update.assigned_agent_id = assignee;
+
+  await db.from("conversations").update(update).eq("id", conversationId);
+  return assignee;
+}
+
 async function executeHandoff(
   db: AdminClient,
   run: FlowRunRow,
   node: FlowNodeRow,
 ): Promise<void> {
-  const cfg = node.config as { assign_to?: string; note?: string };
-  const convUpdate: Record<string, unknown> = {
-    status: "pending",
-    updated_at: new Date().toISOString(),
+  const cfg = node.config as {
+    assign_to?: string;
+    note?: string;
+    assign_mode?: "specific" | "round_robin";
   };
-  if (cfg.assign_to) convUpdate.assigned_agent_id = cfg.assign_to;
-  if (run.conversation_id) {
-    await db
-      .from("conversations")
-      .update(convUpdate)
-      .eq("id", run.conversation_id);
-  }
+  const note = cfg.note ? interpolateVars(cfg.note, run.vars) : null;
+
+  const assignee = await handOffConversationToHuman({
+    db,
+    accountId: run.account_id,
+    conversationId: run.conversation_id,
+    note,
+    // A named agent who has since left the account falls through to
+    // round-robin rather than dropping the assignment on the floor.
+    assignTo: cfg.assign_mode === "round_robin" ? undefined : cfg.assign_to,
+  });
   await logEvent(db, run.id, "handoff", node.node_key, {
-    note: cfg.note ?? null,
-    assigned_to: cfg.assign_to ?? null,
+    note,
+    assigned_to: assignee ?? null,
   });
   await endRun(db, run.id, "handed_off", "handoff_node");
 }
@@ -1069,14 +1136,15 @@ async function handleReplyForActiveRun(
     return { consumed: true, flow_run_id: run.id, outcome: "fallback_fired" };
   }
   if (action.type === "handoff") {
-    if (run.conversation_id) {
-      await db
-        .from("conversations")
-        .update({ status: "pending", updated_at: new Date().toISOString() })
-        .eq("id", run.conversation_id);
-    }
+    const assignee = await handOffConversationToHuman({
+      db,
+      accountId: run.account_id,
+      conversationId: run.conversation_id,
+      note: "The customer's replies stopped matching the bot's options. Picking up from here.",
+    });
     await logEvent(db, run.id, "handoff", run.current_node_key, {
       reason: "fallback_exhausted",
+      assigned_to: assignee ?? null,
     });
     await endRun(db, run.id, "handed_off", "fallback_exhausted");
     return { consumed: true, flow_run_id: run.id, outcome: "handed_off" };

@@ -98,13 +98,24 @@ export interface SendMediaNodeConfig {
 }
 
 export interface HandoffNodeConfig {
-  /** Optional internal note written to flow_run_events.payload.note. */
+  /** Optional internal note. Interpolated, then written to
+   *  `conversations.ai_handoff_summary` so the inbox banner shows it. */
   note?: string;
   /**
    * Optional agent user_id to assign on the conversation when this
    * node fires. Leave unset to flip the status without assignment.
    */
   assign_to?: string;
+  /**
+   * How to choose the assignee. "round_robin" reuses the automations
+   * picker (fewest open conversations wins) rather than a fixed person.
+   *
+   * Assignment is what makes a handoff visible: the `on_conversation_assigned`
+   * trigger from migration 027 raises a `conversation_assigned` notification
+   * the moment `assigned_agent_id` changes. Handing off without assigning
+   * leaves a pending conversation nobody is told about.
+   */
+  assign_mode?: "specific" | "round_robin";
 }
 
 /**
@@ -294,6 +305,29 @@ export interface FlowFallbackPolicy {
   on_timeout_hours: number;
   /** What to do once max_reprompts has been hit. */
   on_exhaust: "handoff" | "end";
+  /**
+   * What the stale-run sweep does when `on_timeout_hours` elapses with no
+   * reply. "end" just closes the run (the original behaviour, kept as the
+   * default so existing flows are unchanged); "handoff" also flips the
+   * conversation to pending so a human picks up a customer who went quiet
+   * mid-flow instead of the enquiry silently evaporating.
+   */
+  on_timeout: "handoff" | "end";
+  /**
+   * Send one nudge after this many hours of silence, before the run times
+   * out. 0 disables it.
+   *
+   * Sized for WhatsApp's 24-hour customer service window: once 24h have
+   * passed since the customer's last message, free-form replies are refused
+   * and only a paid template will reach them. A nudge at 23h is the last
+   * free chance to recover the conversation.
+   *
+   * Fires at most once per run, and only while the customer is silent —
+   * any reply moves `last_advanced_at`, which resets the clock.
+   */
+  nudge_hours: number;
+  /** Text of that nudge. Interpolated with `{{vars.*}}` like any node. */
+  nudge_text: string;
 }
 
 export const DEFAULT_FALLBACK_POLICY: FlowFallbackPolicy = {
@@ -301,6 +335,12 @@ export const DEFAULT_FALLBACK_POLICY: FlowFallbackPolicy = {
   max_reprompts: 2,
   on_timeout_hours: 24,
   on_exhaust: "handoff",
+  on_timeout: "end",
+  // Off by default — an unexpected message to a customer is worse than a
+  // missed one, so an existing flow must opt in.
+  nudge_hours: 0,
+  nudge_text:
+    "Just checking you're still there — reply any time and we'll pick up where we left off.",
 };
 
 // ============================================================

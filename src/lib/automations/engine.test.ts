@@ -11,6 +11,9 @@ const h = vi.hoisted(() => ({
     fromCalls: [] as string[],
     updateCalls: [] as { table: string; filters: [string, string, unknown][] }[],
     upsertCalls: [] as { table: string; payload: unknown }[],
+    existingDeal: null as { id: string; stage_id: string } | null,
+    dealInserts: [] as unknown[],
+    dealUpdates: [] as { payload: unknown; filters: [string, string, unknown][] }[],
     logInserts: [] as Record<string, unknown>[],
     logUpdates: [] as Record<string, unknown>[],
   },
@@ -58,6 +61,18 @@ vi.mock("./admin-client", () => {
       return { data: { steps_executed: [], status: "success" }, error: null };
     }
     if (table === "automation_steps") return { data: state.steps, error: null };
+    if (table === "accounts") return { data: { default_currency: "INR" }, error: null };
+    if (table === "deals") {
+      if (ops.type === "insert") {
+        state.dealInserts.push(ops.payload);
+        return { data: null, error: null };
+      }
+      if (ops.type === "update") {
+        state.dealUpdates.push({ payload: ops.payload, filters: ops.filters });
+        return { data: null, error: null };
+      }
+      return { data: state.existingDeal, error: null };
+    }
     return { data: null, error: null };
   }
 
@@ -117,6 +132,9 @@ beforeEach(() => {
   h.state.fromCalls = [];
   h.state.updateCalls = [];
   h.state.upsertCalls = [];
+  h.state.existingDeal = null;
+  h.state.dealInserts = [];
+  h.state.dealUpdates = [];
   h.state.logInserts = [];
   h.state.logUpdates = [];
 });
@@ -548,5 +566,90 @@ describe("triggerMatches — keyword_match", () => {
   it("ignores empty keywords and empty messages in `word` mode", () => {
     expect(on(automation({ keywords: [""], match_type: "word" }), "anything")).toBe(false);
     expect(on(automation({ keywords: ["hi"], match_type: "word" }), "")).toBe(false);
+  });
+});
+
+// ------------------------------------------------------------
+// move_deal_stage — the whole point of the step is that it is NOT a
+// blind insert. A contact who was written off and comes back must be
+// moved, not duplicated, or the pipeline shows them in two stages at once.
+// ------------------------------------------------------------
+describe("move_deal_stage", () => {
+  const moveAutomation = () => ({
+    id: "a1",
+    account_id: ACCOUNT,
+    user_id: "u1",
+    name: "move on tag",
+    trigger_type: "tag_added",
+    trigger_config: { tag_id: "t1" },
+    is_active: true,
+  });
+
+  const moveStep = () => ({
+    id: "s1",
+    automation_id: "a1",
+    parent_step_id: null,
+    branch: null,
+    step_type: "move_deal_stage",
+    position: 0,
+    step_config: {
+      pipeline_id: "p1",
+      stage_id: "stage-qualified",
+      create_title: "Laser enquiry",
+    },
+  });
+
+  async function run() {
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "tag_added",
+      contactId: "c1",
+      context: { tag_id: "t1" },
+    });
+  }
+
+  it("moves an existing open deal instead of creating a second one", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.existingDeal = { id: "d1", stage_id: "stage-lost" };
+    h.state.automations = [moveAutomation()];
+    h.state.steps = [moveStep()];
+
+    await run();
+
+    expect(h.state.dealInserts).toHaveLength(0);
+    expect(h.state.dealUpdates).toHaveLength(1);
+    expect(
+      (h.state.dealUpdates[0].payload as { stage_id: string }).stage_id,
+    ).toBe("stage-qualified");
+  });
+
+  it("creates a deal when the contact has none", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.existingDeal = null;
+    h.state.automations = [moveAutomation()];
+    h.state.steps = [moveStep()];
+
+    await run();
+
+    expect(h.state.dealUpdates).toHaveLength(0);
+    expect(h.state.dealInserts).toHaveLength(1);
+    expect(h.state.dealInserts[0]).toMatchObject({
+      contact_id: "c1",
+      stage_id: "stage-qualified",
+      title: "Laser enquiry",
+      status: "open",
+    });
+  });
+
+  it("is a no-op when the deal is already in the target stage", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.existingDeal = { id: "d1", stage_id: "stage-qualified" };
+    h.state.automations = [moveAutomation()];
+    h.state.steps = [moveStep()];
+
+    await run();
+
+    expect(h.state.dealInserts).toHaveLength(0);
+    expect(h.state.dealUpdates).toHaveLength(0);
   });
 });
