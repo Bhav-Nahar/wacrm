@@ -102,3 +102,23 @@ export function phoneVariants(sanitized: string): string[] {
 export function isRecipientNotAllowedError(message: string): boolean {
   return /131030|not in allowed list|not in the allowed list/i.test(message)
 }
+
+/**
+ * Phone number as a human should read it.
+ *
+ * Numbers are stored as bare digits, so the UI was rendering
+ * "917021052482" — indistinguishable from an account id at a glance, and
+ * not copy-pasteable into a dialler.
+ *
+ * ponytail: adds the leading `+` and nothing else. Grouping digits into
+ * national blocks ("+91 70210 52482") needs the country's numbering plan,
+ * which means libphonenumber (~150kB) or a hand-kept country table that
+ * will be wrong for somebody. The `+` alone recovers most of the
+ * readability for one line and is never wrong; reach for libphonenumber
+ * only if users actually ask for grouping.
+ */
+export function formatPhoneForDisplay(phone: string | null | undefined): string {
+  if (!phone) return ''
+  const digits = phone.replace(/\D/g, '')
+  return digits ? `+${digits}` : phone
+}

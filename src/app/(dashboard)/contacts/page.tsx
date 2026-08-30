@@ -15,6 +15,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
+import { formatPhoneForDisplay } from '@/lib/whatsapp/phone-utils';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -604,7 +605,7 @@ export default function ContactsPage() {
                     {contact.name || <span className="text-muted-foreground italic">{t('unnamed')}</span>}
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-xs">
-                    {contact.phone}
+                    {formatPhoneForDisplay(contact.phone)}
                   </TableCell>
                   <TableCell className="text-muted-foreground hidden md:table-cell text-sm">
                     {contact.email || <span className="text-muted-foreground">-</span>}

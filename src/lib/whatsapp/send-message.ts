@@ -29,6 +29,7 @@ import {
   sendInteractiveList,
   type MediaKind,
 } from '@/lib/whatsapp/meta-api';
+import { humanizeMetaError } from '@/lib/whatsapp/whatsapp-errors';
 import {
   validateInteractivePayload,
   interactivePayloadPreviewText,
@@ -434,7 +435,14 @@ export async function sendMessageToConversation(
     const message =
       err instanceof Error ? err.message : 'Unknown Meta API error';
     console.error('[send-message] Meta send failed for all variants:', message);
-    throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
+    // The composer renders this string straight to the agent. "Meta API error:
+    // (#131047)" leaves them guessing; the mapped sentence tells them the
+    // 24-hour window closed and they need a template.
+    throw new SendMessageError(
+      'meta_error',
+      `Meta API error: ${humanizeMetaError(message)}`,
+      502
+    );
   }
 
   if (workingPhone !== sanitizedPhone) {

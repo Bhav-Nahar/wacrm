@@ -6,6 +6,7 @@ import {
   Palette,
   PlugZap,
   Shield,
+  Shuffle,
   Tags,
   User,
   UsersRound,
@@ -32,6 +33,7 @@ export const SETTINGS_SECTIONS = [
   'fields',
   'deals',
   'members',
+  'assignment',
   'api',
 ] as const;
 
@@ -58,6 +60,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   fields: { id: 'fields', label: 'Fields & tags', icon: Tags, group: 'workspace' },
   deals: { id: 'deals', label: 'Deals & currency', icon: Coins, group: 'workspace' },
   members: { id: 'members', label: 'Team members', icon: UsersRound, group: 'workspace' },
+  assignment: { id: 'assignment', label: 'Team & assignment', icon: Shuffle, group: 'workspace' },
   api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'workspace' },
 };
 

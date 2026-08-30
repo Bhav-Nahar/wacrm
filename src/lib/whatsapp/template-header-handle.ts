@@ -27,7 +27,10 @@ export async function ensureImageHeaderHandle(
   if (payload.header_handle) return // already have one
   if (!payload.header_media_url) return // validator already requires url-or-handle
 
-  const appId = process.env.META_APP_ID
+  // FACEBOOK_APP_ID is accepted as an alias because Embedded Signup documents
+  // that name; an operator who set only that one would otherwise hit this
+  // error with the right value already in their environment.
+  const appId = process.env.META_APP_ID || process.env.FACEBOOK_APP_ID
   if (!appId) {
     throw new Error(
       'Image-header templates need META_APP_ID set (used for Meta’s Resumable Upload). Add it to your environment, or remove the image header.',

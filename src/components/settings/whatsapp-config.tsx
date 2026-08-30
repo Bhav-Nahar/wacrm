@@ -13,6 +13,8 @@ import {
   Zap,
   AlertTriangle,
   RotateCcw,
+  Sparkles,
+  Smartphone,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
@@ -22,6 +24,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { SettingsPanelHead } from './settings-panel-head';
 import {
@@ -31,20 +34,77 @@ import {
   AccordionContent,
 } from '@/components/ui/accordion';
 import type { WhatsAppConfig as WhatsAppConfigType } from '@/types';
+import type {
+  EmbeddedSignupConnectStart,
+  FbSdk,
+  FbSdkLoginResponse,
+} from '@/types/whatsapp-onboarding';
 
 const MASKED_TOKEN = '••••••••••••••••';
 
 type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
 type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
 
+declare global {
+  interface Window {
+    FB?: FbSdk;
+    fbAsyncInit?: () => void;
+  }
+}
+
+let sdkPromise: Promise<FbSdk> | null = null;
+function loadFacebookSdk(appId: string, version: string): Promise<FbSdk> {
+  if (typeof window === 'undefined') {
+    return Promise.reject(new Error('Window not available'));
+  }
+  if (window.FB) {
+    window.FB.init({ appId, cookie: true, xfbml: false, version });
+    return Promise.resolve(window.FB);
+  }
+  if (sdkPromise) return sdkPromise;
+
+  sdkPromise = new Promise<FbSdk>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://connect.facebook.net/en_US/sdk.js';
+    script.async = true;
+    script.crossOrigin = 'anonymous';
+
+    const BLOCKED =
+      'Could not load Facebook. An ad-blocker or privacy extension is almost ' +
+      'certainly blocking connect.facebook.net — allow it for this page, or ' +
+      'use a private window with extensions disabled, then try again.';
+
+    // A blocker is not one failure mode, it is two, and only one of them
+    // fires `onerror`:
+    //   * blocked outright — the request fails, onerror runs (below)
+    //   * stubbed — an empty 200 is served instead, so the script "loads"
+    //     fine, fbAsyncInit is never called, and nothing ever settles
+    // Without this timer the second case left the Connect button spinning
+    // forever with no error anywhere, which is exactly what it looks like
+    // when the app is broken rather than the browser.
+    const timer = setTimeout(() => {
+      sdkPromise = null;
+      reject(new Error(BLOCKED));
+    }, 12_000);
+
+    script.onerror = () => {
+      clearTimeout(timer);
+      sdkPromise = null;
+      reject(new Error(BLOCKED));
+    };
+    window.fbAsyncInit = () => {
+      clearTimeout(timer);
+      window.FB!.init({ appId, cookie: true, xfbml: false, version });
+      resolve(window.FB!);
+    };
+    document.body.appendChild(script);
+  });
+  return sdkPromise;
+}
+
 export function WhatsAppConfig() {
   const t = useTranslations('Settings.whatsapp');
   const supabase = createClient();
-  // After multi-user, whatsapp_config is one-row-per-account, not
-  // one-row-per-user. We pull `accountId` straight off the auth
-  // context and key every read off it — so a teammate who just
-  // joined an account sees the inviter's saved config without
-  // having to re-enter anything.
   const {
     user,
     accountId,
@@ -57,17 +117,14 @@ export function WhatsAppConfig() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [busyConnecting, setBusyConnecting] = useState(false);
+  const [connectStart, setConnectStart] = useState<EmbeddedSignupConnectStart | null>(null);
+
   const [showToken, setShowToken] = useState(false);
   const [config, setConfig] = useState<WhatsAppConfigType | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unknown');
   const [resetReason, setResetReason] = useState<ResetReason>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
-  // Guards against re-hydrating the form when the load effect below
-  // re-runs for reasons unrelated to actually switching accounts —
-  // e.g. Supabase's onAuthStateChange fires a token refresh (new
-  // `user` object, profileLoading flips true/false) when the browser
-  // tab regains focus. Without this, that churn calls fetchConfig()
-  // again and overwrites whatever the user typed but hadn't saved yet.
   const loadedAccountIdRef = useRef<string | null>(null);
 
   const [phoneNumberId, setPhoneNumberId] = useState('');
@@ -77,20 +134,9 @@ export function WhatsAppConfig() {
   const [pin, setPin] = useState('');
   const [tokenEdited, setTokenEdited] = useState(false);
 
-  // Inbound-media mirror (issue #466). Unlike everything else on this
-  // page it is NOT part of handleSave: that path insists on re-entering
-  // the access token so it can re-verify with Meta, which is a silly
-  // toll to pay for flipping a boolean. The switch writes straight to
-  // the row instead — RLS (migration 017) restricts whatsapp_config
-  // UPDATE to admins, hence the canEditSettings gate below; without it
-  // a viewer's toggle would match zero rows and appear to work.
   const [mirrorMedia, setMirrorMedia] = useState(true);
   const [savingMirror, setSavingMirror] = useState(false);
 
-  // True once /register has succeeded on Meta's side (timestamp set
-  // in the row). When false, the saved config is metadata-only and
-  // Meta will silently drop every inbound event — that's the
-  // multi-number bug that prompted this work.
   const isRegistered = Boolean(config?.registered_at);
   const lastRegistrationError = config?.last_registration_error ?? null;
 
@@ -111,15 +157,23 @@ export function WhatsAppConfig() {
       ? `${window.location.origin}/api/whatsapp/webhook`
       : '';
 
+  const fetchConnectConfig = useCallback(async () => {
+    try {
+      const res = await fetch('/api/whatsapp/connect-url');
+      if (res.ok) {
+        const data = (await res.json()) as EmbeddedSignupConnectStart;
+        setConnectStart(data);
+      }
+    } catch (err) {
+      console.warn('Failed to load Embedded Signup config:', err);
+    }
+  }, []);
+
   const fetchConfig = useCallback(async (acctId: string) => {
     setLoading(true);
     try {
-      // Load form values from Supabase (shows what's in DB).
-      // Switched from `user_id` (which would only match the row's
-      // original author) to `account_id` so every member of the
-      // account sees the same saved configuration. UNIQUE(account_id)
-      // on the table guarantees the .maybeSingle() return type
-      // remains accurate.
+      await fetchConnectConfig();
+
       const { data, error } = await supabase
         .from('whatsapp_config')
         .select('*')
@@ -138,8 +192,6 @@ export function WhatsAppConfig() {
         setVerifyToken('');
         setPin('');
         setTokenEdited(false);
-        // Undefined on a row read before migration 039 — treat that as
-        // on, matching the webhook's own default.
         setMirrorMedia(data.mirror_inbound_media !== false);
       } else {
         setConfig(null);
@@ -151,10 +203,9 @@ export function WhatsAppConfig() {
         setTokenEdited(false);
         setMirrorMedia(true);
       }
-      // Clear any stale probe result when reloading the row.
       setRegistrationProbe(null);
 
-      // Then verify health via the API (decrypts token + pings Meta)
+      // Verify health via the API (decrypts token + pings Meta)
       if (data) {
         try {
           const res = await fetch('/api/whatsapp/config', { method: 'GET' });
@@ -166,7 +217,13 @@ export function WhatsAppConfig() {
             setStatusMessage('');
           } else {
             setConnectionStatus('disconnected');
-            setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
+            setResetReason(
+              payload.needs_reset
+                ? 'token_corrupted'
+                : payload.reason === 'meta_api_error'
+                  ? 'meta_api_error'
+                  : null
+            );
             setStatusMessage(payload.message || '');
           }
         } catch (err) {
@@ -184,14 +241,9 @@ export function WhatsAppConfig() {
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, [supabase, fetchConnectConfig]);
 
   useEffect(() => {
-    // Need both the auth session (`!authLoading`) AND the profile
-    // (`!profileLoading`, which carries `accountId`). Without the
-    // second guard, the effect would fire with `accountId === null`
-    // for the first render window and bail without ever retrying
-    // once the profile arrives.
     if (authLoading || profileLoading) return;
     if (!user || !accountId) {
       loadedAccountIdRef.current = null;
@@ -203,10 +255,111 @@ export function WhatsAppConfig() {
     fetchConfig(accountId);
   }, [authLoading, profileLoading, user?.id, accountId, fetchConfig]);
 
+  async function handleEmbeddedSignup() {
+    if (!connectStart?.configured || !connectStart.app_id || !connectStart.config_id) {
+      toast.error(t('esNotConfigured'));
+      return;
+    }
+
+    setBusyConnecting(true);
+
+    const onSignupMessage = (event: MessageEvent) => {
+      if (
+        event.origin !== 'https://www.facebook.com' &&
+        event.origin !== 'https://web.facebook.com'
+      )
+        return;
+      try {
+        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+        if (data?.type !== 'WA_EMBEDDED_SIGNUP') return;
+        // Meta's own account of what happened, verbatim. The popup's
+        // user-facing copy is "Sorry, something went wrong" no matter what
+        // actually failed, so without this there is nothing to debug from —
+        // this payload names the step and, usually, the reason.
+        console.debug('[embedded-signup] Meta postMessage:', data);
+        if (data.event === 'CANCEL') {
+          const step = data.data?.current_step
+            ? String(data.data.current_step).toLowerCase().replace(/_/g, ' ')
+            : '';
+          toast.info(step ? `WhatsApp signup was cancelled at step: ${step}` : 'WhatsApp signup was cancelled.');
+        } else if (data.event === 'ERROR') {
+          toast.error(data.data?.error_message || 'Meta reported an error during signup.');
+        }
+      } catch {
+        // chatter on channel
+      }
+    };
+
+    window.addEventListener('message', onSignupMessage);
+    const stopListening = () => window.removeEventListener('message', onSignupMessage);
+
+    try {
+      const FB = await loadFacebookSdk(
+        connectStart.app_id,
+        connectStart.graph_version || 'v21.0'
+      );
+
+      FB.login(
+        (response: FbSdkLoginResponse) => {
+          stopListening();
+          const code = response?.authResponse?.code;
+          if (!code) {
+            setBusyConnecting(false);
+            if (response?.status !== 'unknown') {
+              toast.info('WhatsApp signup was closed before completion.');
+            }
+            return;
+          }
+
+          (async () => {
+            try {
+              const res = await fetch('/api/whatsapp/connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code, source: 'sdk' }),
+              });
+              const payload = await res.json();
+
+              if (!res.ok) {
+                throw new Error(payload.error || 'Failed to complete WhatsApp connection');
+              }
+
+              const resultData = payload.data;
+              toast.success(
+                resultData?.verified_name
+                  ? `Connected to ${resultData.verified_name} successfully!`
+                  : 'WhatsApp connected successfully!'
+              );
+
+              if (accountId) await fetchConfig(accountId);
+            } catch (err) {
+              console.error('Embedded signup completion error:', err);
+              toast.error(err instanceof Error ? err.message : 'Could not finish connecting.');
+            } finally {
+              setBusyConnecting(false);
+            }
+          })();
+        },
+        {
+          config_id: connectStart.config_id,
+          response_type: 'code',
+          override_default_response_type: true,
+          // Meta's documented shape. `version` is not an extras key it
+          // knows; an unrecognised one is answered with the popup's
+          // generic "Sorry, something went wrong" and nothing else.
+          extras: { setup: {}, featureType: '', sessionInfoVersion: '3' },
+        }
+      );
+    } catch (err) {
+      stopListening();
+      setBusyConnecting(false);
+      console.error('Failed to launch Embedded Signup SDK:', err);
+      toast.error(err instanceof Error ? err.message : 'Could not launch Facebook SDK.');
+    }
+  }
+
   async function handleToggleMirrorMedia(next: boolean) {
     if (!config || !accountId || savingMirror) return;
-    // Optimistic — the switch should feel instant; a failure rolls it
-    // back rather than leaving the UI ahead of the row.
     const previous = mirrorMedia;
     setMirrorMedia(next);
     setSavingMirror(true);
@@ -238,28 +391,16 @@ export function WhatsAppConfig() {
 
     try {
       setSaving(true);
-
-      // Always POST through the API — it verifies with Meta and encrypts
-      // the access_token server-side with ENCRYPTION_KEY. Skipping this
-      // and writing direct to Supabase stores the token in plaintext,
-      // which then fails decryption on every subsequent health check.
       const payload: Record<string, unknown> = {
         phone_number_id: phoneNumberId.trim(),
         waba_id: wabaId.trim() || null,
         verify_token: verifyToken.trim() || null,
-        // Optional — only sent when the user filled it in. The server
-        // requires it on first save or when changing numbers; for a
-        // simple token rotation, leaving it blank skips re-register.
         pin: pin.trim() || null,
       };
 
       if (tokenEdited && accessToken !== MASKED_TOKEN && accessToken.trim()) {
         payload.access_token = accessToken.trim();
       } else if (config) {
-        // Existing config — reuse stored encrypted token by decrypting on the
-        // server. But our POST handler requires an access_token to verify
-        // with Meta. If the user didn't change the token, we need to signal
-        // that. Simplest: require token re-entry if they're updating.
         toast.error('Please re-enter the Access Token to save changes');
         setSaving(false);
         return;
@@ -279,36 +420,23 @@ export function WhatsAppConfig() {
         return;
       }
 
-      // The route now returns a structured outcome:
-      //   * registered=true   → number is live, events will flow
-      //   * registered=false  → credentials saved but /register
-      //                         failed; UI shows the specific error
-      //                         and a retry path. registration_error
-      //                         is human-readable from Meta.
       if (data.registered === false && data.registration_error) {
         toast.error(
           `Saved, but Meta couldn't register the number: ${data.registration_error}`,
-          { duration: 12000 },
+          { duration: 12000 }
         );
       } else if (data.registration_skipped) {
-        // Credentials saved + verified, but /register was skipped
-        // because no PIN was supplied (e.g. a Meta test number).
-        // Don't claim the number is "Live" — point at the
-        // Registration status banner instead.
         toast.success(
           'Credentials saved and verified. Inbound registration was skipped (no PIN) — see Registration status below.',
-          { duration: 10000 },
+          { duration: 10000 }
         );
         setPin('');
       } else {
         toast.success(
           data.phone_info?.verified_name
             ? `Live — ${data.phone_info.verified_name} can now receive events.`
-            : 'WhatsApp connected. Events will start flowing within a minute.',
+            : 'WhatsApp connected. Events will start flowing within a minute.'
         );
-        // Clear the PIN so subsequent saves don't accidentally
-        // re-register (which would void the active subscription if
-        // the PIN became stale).
         setPin('');
       }
 
@@ -338,7 +466,13 @@ export function WhatsAppConfig() {
         );
       } else {
         setConnectionStatus('disconnected');
-        setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
+        setResetReason(
+          payload.needs_reset
+            ? 'token_corrupted'
+            : payload.reason === 'meta_api_error'
+              ? 'meta_api_error'
+              : null
+        );
         setStatusMessage(payload.message || '');
         toast.error(payload.message || 'API connection failed');
       }
@@ -365,7 +499,7 @@ export function WhatsAppConfig() {
       } else {
         toast.error(
           'Number is not fully registered. See the checks below for which step failed.',
-          { duration: 8000 },
+          { duration: 8000 }
         );
       }
       if (accountId) await fetchConfig(accountId);
@@ -392,7 +526,7 @@ export function WhatsAppConfig() {
         return;
       }
 
-      toast.success('Configuration cleared. You can now re-enter your credentials.');
+      toast.success('Configuration cleared. You can now re-connect.');
       setConfig(null);
       setPhoneNumberId('');
       setWabaId('');
@@ -447,7 +581,7 @@ export function WhatsAppConfig() {
               <AlertTriangle className="size-5 text-amber-400 mt-0.5 shrink-0" />
               <div className="flex-1">
                 <AlertTitle className="text-amber-200 mb-1">
-                  Stored token can&apos;t be decrypted
+                  {t('tokenCorrupted')}
                 </AlertTitle>
                 <AlertDescription className="text-amber-100/80 text-sm">
                   {statusMessage}
@@ -475,7 +609,69 @@ export function WhatsAppConfig() {
           </Alert>
         )}
 
-        {/* Connection Status */}
+        {/* 1-Click Embedded Signup Primary Card */}
+        <Card className="border-primary/30 bg-gradient-to-br from-primary/5 via-card to-card overflow-hidden">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                  <Sparkles className="size-4" />
+                </div>
+                <div>
+                  <CardTitle className="text-foreground text-base">
+                    {t('embeddedSignupTitle')}
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    {t('embeddedSignupDesc')}
+                  </CardDescription>
+                </div>
+              </div>
+              {connectionStatus === 'connected' && (
+                <Badge variant="default" className="bg-emerald-600 text-white gap-1 text-xs">
+                  <CheckCircle2 className="size-3" />
+                  {t('credentialsValid')}
+                </Badge>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4 pt-0">
+            {connectStart?.configured ? (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2">
+                <p className="text-xs text-muted-foreground leading-relaxed max-w-md">
+                  {t('connectInstructions')}
+                </p>
+                <Button
+                  onClick={handleEmbeddedSignup}
+                  disabled={busyConnecting}
+                  className="shrink-0 bg-primary hover:bg-primary/90 text-primary-foreground gap-2 font-medium"
+                >
+                  {busyConnecting ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      {t('connecting')}
+                    </>
+                  ) : connectionStatus === 'connected' ? (
+                    <>
+                      <RotateCcw className="size-4" />
+                      {t('reconnectWithMeta')}
+                    </>
+                  ) : (
+                    <>
+                      <Smartphone className="size-4" />
+                      {t('connectWithMeta')}
+                    </>
+                  )}
+                </Button>
+              </div>
+            ) : (
+              <div className="rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+                <p>{t('esNotConfigured')}</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Connection Status Indicator */}
         <Alert className="bg-card border-border">
           <div className="flex items-center gap-2">
             {connectionStatus === 'connected' ? (
@@ -490,16 +686,11 @@ export function WhatsAppConfig() {
           <AlertDescription className="text-muted-foreground">
             {connectionStatus === 'connected'
               ? t('connectedDesc')
-              : statusMessage ||
-                t('notConnectedDesc')}
+              : statusMessage || t('notConnectedDesc')}
           </AlertDescription>
         </Alert>
 
-        {/* Registration Status — the "is it actually live?" check.
-            Credentials being valid is necessary but not sufficient;
-            without a successful /register call the number won't
-            receive inbound events. Surface this dimension separately
-            so users don't trust a misleading green banner. */}
+        {/* Registration Status Indicator */}
         {config && (
           <Alert
             className={
@@ -598,104 +789,128 @@ export function WhatsAppConfig() {
           </Alert>
         )}
 
-        {/* API Credentials */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-foreground">{t('apiCredentialsTitle')}</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t('apiCredentialsDesc')}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">{t('phoneNumberId')}</Label>
-              <Input
-                placeholder="e.g. 100234567890123"
-                value={phoneNumberId}
-                onChange={(e) => setPhoneNumberId(e.target.value)}
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">{t('wabaId')}</Label>
-              <Input
-                placeholder="e.g. 100234567890456"
-                value={wabaId}
-                onChange={(e) => setWabaId(e.target.value)}
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">{t('accessToken')}</Label>
-              <div className="relative">
-                <Input
-                  type={showToken ? 'text' : 'password'}
-                  placeholder={t('accessTokenPlaceholder')}
-                  value={accessToken}
-                  onChange={(e) => {
-                    setAccessToken(e.target.value);
-                    setTokenEdited(true);
-                  }}
-                  onFocus={() => {
-                    if (accessToken === MASKED_TOKEN) {
-                      setAccessToken('');
-                      setTokenEdited(true);
-                    }
-                  }}
-                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowToken(!showToken)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {showToken ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                </button>
-              </div>
-              {config && !tokenEdited && (
-                <p className="text-xs text-muted-foreground">
-                  {t('tokenHidden')}
+        {/* Manual / Advanced Credentials Accordion */}
+        {/* Base UI's accordion takes an array of open item values — there is
+            no Radix-style `type`/`collapsible`. Closed once a config exists,
+            since the manual fields are then just an escape hatch. */}
+        <Accordion defaultValue={config ? [] : ['manual-creds']}>
+          <AccordionItem value="manual-creds" className="border border-border rounded-lg px-4 bg-card">
+            <AccordionTrigger className="text-foreground hover:no-underline py-4">
+              <div className="text-left">
+                <p className="font-medium text-sm">{t('manualSetupTitle')}</p>
+                <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                  {t('manualSetupDesc')}
                 </p>
-              )}
-            </div>
+              </div>
+            </AccordionTrigger>
+            <AccordionContent className="space-y-4 pt-2 pb-4">
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">{t('phoneNumberId')}</Label>
+                <Input
+                  placeholder="e.g. 100234567890123"
+                  value={phoneNumberId}
+                  onChange={(e) => setPhoneNumberId(e.target.value)}
+                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                />
+              </div>
 
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">{t('webhookVerifyToken')}</Label>
-              <Input
-                placeholder={t('webhookVerifyTokenPlaceholder')}
-                value={verifyToken}
-                onChange={(e) => setVerifyToken(e.target.value)}
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-              />
-              <p className="text-xs text-muted-foreground">
-                {t('webhookVerifyTokenHint')}
-              </p>
-            </div>
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">{t('wabaId')}</Label>
+                <Input
+                  placeholder="e.g. 100234567890456"
+                  value={wabaId}
+                  onChange={(e) => setWabaId(e.target.value)}
+                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                />
+              </div>
 
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">
-                {t('twoStepPin')}
-                <span className="ml-1 text-muted-foreground">{t('optional')}</span>
-              </Label>
-              <Input
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                placeholder={t('pinPlaceholder')}
-                value={pin}
-                onChange={(e) =>
-                  setPin(e.target.value.replace(/\D/g, '').slice(0, 6))
-                }
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground tracking-widest"
-              />
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                <span dangerouslySetInnerHTML={{ __html: t('pinHint') }} />
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">{t('accessToken')}</Label>
+                <div className="relative">
+                  <Input
+                    type={showToken ? 'text' : 'password'}
+                    placeholder={t('accessTokenPlaceholder')}
+                    value={accessToken}
+                    onChange={(e) => {
+                      setAccessToken(e.target.value);
+                      setTokenEdited(true);
+                    }}
+                    onFocus={() => {
+                      if (accessToken === MASKED_TOKEN) {
+                        setAccessToken('');
+                        setTokenEdited(true);
+                      }
+                    }}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowToken(!showToken)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {showToken ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                </div>
+                {config && !tokenEdited && (
+                  <p className="text-xs text-muted-foreground">
+                    {t('tokenHidden')}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">{t('webhookVerifyToken')}</Label>
+                <Input
+                  placeholder={t('webhookVerifyTokenPlaceholder')}
+                  value={verifyToken}
+                  onChange={(e) => setVerifyToken(e.target.value)}
+                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('webhookVerifyTokenHint')}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">
+                  {t('twoStepPin')}
+                  <span className="ml-1 text-muted-foreground">{t('optional')}</span>
+                </Label>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder={t('pinPlaceholder')}
+                  value={pin}
+                  onChange={(e) =>
+                    setPin(e.target.value.replace(/\D/g, '').slice(0, 6))
+                  }
+                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground tracking-widest"
+                />
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  <span dangerouslySetInnerHTML={{ __html: t('pinHint') }} />
+                </p>
+              </div>
+
+              <div className="pt-2">
+                <Button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      {t('saving')}
+                    </>
+                  ) : (
+                    t('saveConfig')
+                  )}
+                </Button>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
 
         {/* Webhook URL */}
         <Card>
@@ -727,9 +942,7 @@ export function WhatsAppConfig() {
           </CardContent>
         </Card>
 
-        {/* Attachment retention. Only meaningful once a number is
-            connected, since it governs what the webhook does with
-            inbound media. */}
+        {/* Attachment retention */}
         {config && (
           <Card>
             <CardHeader>
@@ -764,22 +977,8 @@ export function WhatsAppConfig() {
           </Card>
         )}
 
-        {/* Action Buttons */}
+        {/* Global Action Buttons */}
         <div className="flex flex-wrap gap-3">
-          <Button
-            onClick={handleSave}
-            disabled={saving}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground"
-          >
-            {saving ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                {t('saving')}
-              </>
-            ) : (
-              t('saveConfig')
-            )}
-          </Button>
           <Button
             variant="outline"
             onClick={handleTestConnection}
