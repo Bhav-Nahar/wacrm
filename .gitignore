@@ -42,3 +42,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Supabase CLI scratch state
+supabase/.branches/
+supabase/.temp/
+
+# Stray screenshots
+Screenshot*.png

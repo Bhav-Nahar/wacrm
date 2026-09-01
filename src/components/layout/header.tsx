@@ -68,7 +68,12 @@ export function Header({ onOpenSidebar }: HeaderProps) {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <h1 className="truncate text-base font-semibold text-foreground sm:text-lg">
+        {/* Mobile only. Every page already renders its own heading, so on a
+            large screen this bar repeated it verbatim — two "Contacts" stacked
+            on top of each other, costing ~90px of vertical space on every
+            screen for no information. On narrow screens the page heading
+            scrolls out of reach, so the sticky bar still earns its keep. */}
+        <h1 className="truncate text-base font-semibold text-foreground sm:text-lg lg:hidden">
           {t(titleKey as string)}
         </h1>
       </div>

@@ -16,9 +16,11 @@ import type {
   UpdateContactFieldStepConfig,
   WaitStepConfig,
   CreateDealStepConfig,
+  MoveDealStageStepConfig,
   AssignConversationStepConfig,
 } from '@/types'
 import { supabaseAdmin } from './admin-client'
+import { pickRoundRobinAgent } from './assign-agent'
 import { addContactTagIfAbsent } from '@/lib/contacts/tag-write'
 import { MAX_TAG_CHAIN_DEPTH, getTagChainDepth } from '@/lib/contacts/tag-chain'
 import { engineSendText, engineSendTemplate, engineSendInteractive } from './meta-send'
@@ -483,24 +485,25 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'assign_conversation': {
       const cfg = step.step_config as AssignConversationStepConfig
       if (!args.contactId) throw new Error('assign_conversation needs a contact')
+
       let agentId = cfg.agent_id
-      if (cfg.mode === 'round_robin') {
-        // Pick any member of the account. The existing implementation
-        // only ever returned the automation's author; preserving that
-        // shape until a real round-robin algorithm replaces it.
-        const { data: profiles } = await db
-          .from('profiles')
-          .select('user_id')
-          .eq('account_id', args.automation.account_id)
-          .limit(1)
-        agentId = profiles?.[0]?.user_id
+      // Round robin, but also the fallback for a 'specific' assignee who has
+      // since left the account: dropping the assignment on the floor is worse
+      // than giving it to whoever is least busy.
+      if (cfg.mode === 'round_robin' || !agentId) {
+        agentId = await pickRoundRobinAgent(db, args.automation.account_id, cfg)
       }
       if (!agentId) return 'no agent resolved'
+
       await db
         .from('conversations')
         .update({ assigned_agent_id: agentId })
         .eq('account_id', args.automation.account_id)
         .eq('contact_id', args.contactId)
+        // Only live threads. Without this, a contact's previously CLOSED
+        // conversations get reassigned too, resurfacing them on someone's
+        // plate months later.
+        .neq('status', 'closed')
       return `assigned to ${agentId}`
     }
 
@@ -577,6 +580,57 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         stage_id: cfg.stage_id,
         contact_id: args.contactId,
         title: interpolate(cfg.title, args),
+        value: cfg.value ?? 0,
+        currency: acct?.default_currency ?? 'USD',
+        status: 'open',
+      })
+      return 'deal created'
+    }
+
+    case 'move_deal_stage': {
+      const cfg = step.step_config as MoveDealStageStepConfig
+      if (!cfg.pipeline_id || !cfg.stage_id) {
+        throw new Error('move_deal_stage needs pipeline + stage')
+      }
+      if (!args.contactId) throw new Error('move_deal_stage needs a contact')
+
+      // Only OPEN deals move. A won or lost deal is a settled record, and
+      // dragging one back into an active stage rewrites history rather than
+      // reflecting it — the returning customer gets a fresh deal instead.
+      const { data: existing } = await db
+        .from('deals')
+        .select('id, stage_id')
+        .eq('account_id', args.automation.account_id)
+        .eq('contact_id', args.contactId)
+        .eq('pipeline_id', cfg.pipeline_id)
+        .eq('status', 'open')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (existing) {
+        if (existing.stage_id === cfg.stage_id) return 'deal already in stage'
+        const { error } = await db
+          .from('deals')
+          .update({ stage_id: cfg.stage_id, updated_at: new Date().toISOString() })
+          .eq('id', existing.id)
+        if (error) throw new Error(`move_deal_stage failed: ${error.message}`)
+        return 'deal moved'
+      }
+
+      // Same currency rule as create_deal — see the note there.
+      const { data: acct } = await db
+        .from('accounts')
+        .select('default_currency')
+        .eq('id', args.automation.account_id)
+        .maybeSingle()
+      await db.from('deals').insert({
+        account_id: args.automation.account_id,
+        user_id: args.automation.user_id,
+        pipeline_id: cfg.pipeline_id,
+        stage_id: cfg.stage_id,
+        contact_id: args.contactId,
+        title: interpolate(cfg.create_title, args),
         value: cfg.value ?? 0,
         currency: acct?.default_currency ?? 'USD',
         status: 'open',

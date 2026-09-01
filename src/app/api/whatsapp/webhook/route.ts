@@ -112,6 +112,26 @@ export async function GET(request: Request) {
       )
     }
 
+    // Instance-wide verify token, checked BEFORE the per-account rows.
+    //
+    // Embedded Signup has no screen on which a tenant types a verify token,
+    // so an ES-onboarded account stores none and the per-row loop below can
+    // never match it. Meta's webhook is configured once per *app* anyway —
+    // not once per tenant — so one operator-set token is the right shape for
+    // it. Without this, an instance whose tenants all onboard via ES fails
+    // Meta's "Verify and save" forever and receives no inbound messages at
+    // all, silently.
+    //
+    // Optional: unset, this is skipped and behaviour is exactly as before,
+    // so existing manually-configured instances are unaffected.
+    const instanceVerifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN?.trim()
+    if (instanceVerifyToken && verifyToken === instanceVerifyToken) {
+      return new Response(challenge, {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      })
+    }
+
     // Fetch all whatsapp configs to check verify tokens
     const { data: configs, error: configError } = await supabaseAdmin()
       .from('whatsapp_config')

@@ -15,6 +15,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
+import { formatPhoneForDisplay } from '@/lib/whatsapp/phone-utils';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -49,7 +50,9 @@ import {
   SlidersHorizontal,
   Filter,
   X,
+  Download,
 } from 'lucide-react';
+import { contactsToCsv } from '@/lib/contacts/to-csv';
 import { ContactForm } from '@/components/contacts/contact-form';
 import { ContactDetailView } from '@/components/contacts/contact-detail-view';
 import { ImportModal } from '@/components/contacts/import-modal';
@@ -59,6 +62,13 @@ import { GatedButton } from '@/components/ui/gated-button';
 import { useTranslations } from 'next-intl';
 
 const PAGE_SIZE = 25;
+
+// Export ceiling. Not a technical limit — a guard against a browser tab
+// trying to hold and stringify an unbounded table. Past this, the right
+// tool is a database dump, not a click in the UI.
+const EXPORT_LIMIT = 5000;
+// PostgREST caps a single response at 1000 rows, so the export pages.
+const EXPORT_PAGE = 500;
 
 interface ContactWithTags extends Contact {
   tags?: Tag[];
@@ -93,6 +103,7 @@ export default function ContactsPage() {
   // Bulk selection (page-scoped — only the loaded rows are selectable)
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // All tags for display
   const [tagsMap, setTagsMap] = useState<Record<string, Tag>>({});
@@ -208,6 +219,107 @@ export default function ContactsPage() {
     setContacts(enriched);
     setLoading(false);
   }, [supabase, page, search, selectedTagIds, tagsMap, t]);
+
+  /**
+   * Export every contact matching the CURRENT search + tag filters — not
+   * just the visible page, which is what makes the button worth having.
+   * Columns match the importer's, so the file round-trips.
+   */
+  const handleExport = useCallback(async () => {
+    setExporting(true);
+    try {
+      const term = search.trim();
+      const rows: Contact[] = [];
+
+      while (rows.length < EXPORT_LIMIT) {
+        const from = rows.length;
+        const size = Math.min(EXPORT_PAGE, EXPORT_LIMIT - from);
+        let pageRows: Contact[];
+
+        if (selectedTagIds.length > 0) {
+          const { data, error } = await supabase.rpc('filter_contacts_by_tags', {
+            p_tag_ids: selectedTagIds,
+            p_search: term || null,
+            p_limit: size,
+            p_offset: from,
+          });
+          if (error) throw error;
+          pageRows = ((data ?? []) as { contact: Contact }[]).map((r) => r.contact);
+        } else {
+          let query = supabase
+            .from('contacts')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .range(from, from + size - 1);
+          if (term) {
+            const like = `%${term}%`;
+            query = query.or(
+              `name.ilike.${like},phone.ilike.${like},email.ilike.${like}`,
+            );
+          }
+          const { data, error } = await query;
+          if (error) throw error;
+          pageRows = data ?? [];
+        }
+
+        rows.push(...pageRows);
+        if (pageRows.length < size) break; // short page = last page
+      }
+
+      if (rows.length === 0) {
+        toast.error(t('toastExportEmpty'));
+        return;
+      }
+
+      // Tag names, chunked so the `in.(...)` filter can't grow into a URL
+      // the server rejects.
+      // ponytail: a chunk returning >1000 tag rows would truncate; at 100
+      // contacts that needs >10 tags each. Chunk smaller if that shows up.
+      const tagIdsByContact: Record<string, string[]> = {};
+      for (let i = 0; i < rows.length; i += 100) {
+        const ids = rows.slice(i, i + 100).map((c) => c.id);
+        const { data } = await supabase
+          .from('contact_tags')
+          .select('contact_id, tag_id')
+          .in('contact_id', ids);
+        data?.forEach((ct) => {
+          (tagIdsByContact[ct.contact_id] ??= []).push(ct.tag_id);
+        });
+      }
+
+      const csv = contactsToCsv(
+        rows.map((c) => ({
+          phone: c.phone,
+          name: c.name,
+          email: c.email,
+          company: c.company,
+          tags: (tagIdsByContact[c.id] ?? [])
+            .map((id) => tagsMap[id])
+            .filter(Boolean),
+        })),
+      );
+
+      // \uFEFF: without the BOM, Excel opens a UTF-8 CSV as latin-1 and
+      // every non-ASCII name arrives mangled.
+      const blob = new Blob(['\uFEFF' + csv], {
+        type: 'text/csv;charset=utf-8',
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `contacts-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+
+      if (rows.length >= EXPORT_LIMIT) {
+        toast.warning(t('toastExportCapped', { count: EXPORT_LIMIT }));
+      }
+    } catch {
+      toast.error(t('toastExportFailed'));
+    } finally {
+      setExporting(false);
+    }
+  }, [supabase, search, selectedTagIds, tagsMap, t]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -360,6 +472,19 @@ export default function ContactsPage() {
               {t('customFieldsBtn')}
             </Button>
           )}
+          <Button
+            variant="outline"
+            onClick={handleExport}
+            disabled={exporting || loading}
+            className="border-border text-muted-foreground hover:bg-muted"
+          >
+            {exporting ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Download className="size-4" />
+            )}
+            {t('exportBtn')}
+          </Button>
           <GatedButton
             variant="outline"
             canAct={canEdit}
@@ -604,7 +729,7 @@ export default function ContactsPage() {
                     {contact.name || <span className="text-muted-foreground italic">{t('unnamed')}</span>}
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-xs">
-                    {contact.phone}
+                    {formatPhoneForDisplay(contact.phone)}
                   </TableCell>
                   <TableCell className="text-muted-foreground hidden md:table-cell text-sm">
                     {contact.email || <span className="text-muted-foreground">-</span>}

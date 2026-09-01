@@ -247,6 +247,10 @@ function InboxPageInner() {
                     ...c,
                     last_message_text: newMsg.content_text ?? "",
                     last_message_at: newMsg.created_at,
+                    // Mirrors what the DB trigger is about to write, so
+                    // the "waiting on us" badge flips in the same frame
+                    // as the preview text instead of a round-trip later.
+                    last_message_from: newMsg.sender_type,
                     unread_count:
                       activeConversation?.id === newMsg.conversation_id
                         ? 0
@@ -534,6 +538,26 @@ function InboxPageInner() {
     [activeConversation]
   );
 
+  /**
+   * `e` shortcut — close the open thread from the keyboard. Same write
+   * the status dropdown in MessageThread performs; duplicated here (four
+   * lines) rather than threaded up through a callback prop, which would
+   * mean rendering the thread just to reach its handler.
+   */
+  const handleCloseActive = useCallback(() => {
+    const conv = activeConversation;
+    if (!conv || conv.status === "closed") return;
+    const supabase = createClient();
+    void supabase
+      .from("conversations")
+      .update({ status: "closed" })
+      .eq("id", conv.id)
+      .then(({ error }) => {
+        if (error) toast.error(t("closeFailed"));
+      });
+    handleStatusChange(conv.id, "closed");
+  }, [activeConversation, handleStatusChange, t]);
+
   const handleAssignChange = useCallback(
     (conversationId: string, assignedAgentId: string | null) => {
       setConversations((prev) =>
@@ -590,6 +614,7 @@ function InboxPageInner() {
             conversations={conversations}
             onConversationsLoaded={handleConversationsLoaded}
             resyncToken={resyncToken}
+            onCloseActive={handleCloseActive}
           />
         </div>
 

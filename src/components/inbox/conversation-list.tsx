@@ -4,13 +4,15 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   CONVERSATION_SELECT,
+  isWaitingOnUs,
   matchesContactFilters,
   normalizeConversations,
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
-import { Search, ChevronDown, X } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
+import { Search, ChevronDown, X, Bot, Clock } from "lucide-react";
+import { formatDistanceToNow, formatDistanceToNowStrict } from "date-fns";
+import { useAuth } from "@/hooks/use-auth";
 import { useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
 import {
@@ -34,6 +36,11 @@ interface ConversationListProps {
    * or the tab was throttled. Optional so existing callers keep working.
    */
   resyncToken?: number;
+  /**
+   * Close the active conversation — bound to the `e` shortcut. Optional:
+   * without it the key is simply inert.
+   */
+  onCloseActive?: () => void;
 }
 
 const STATUS_COLORS: Record<ConversationStatus, string> = {
@@ -44,7 +51,14 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
 
 
 
-type InboxFilter = ConversationStatus | "all" | "unread";
+type InboxFilter =
+  | ConversationStatus
+  | "all"
+  | "unread"
+  | "bot"
+  | "mine"
+  | "unassigned"
+  | "waiting";
 
 export function ConversationList({
   activeConversationId,
@@ -52,12 +66,19 @@ export function ConversationList({
   conversations,
   onConversationsLoaded,
   resyncToken = 0,
+  onCloseActive,
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
   
   const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
     { label: t("filterAll"), value: "all" },
     { label: t("filterUnread"), value: "unread" },
+    { label: t("filterWaiting"), value: "waiting" },
+    { label: t("filterMine"), value: "mine" },
+    { label: t("filterUnassigned"), value: "unassigned" },
+    { label: t("filterBot"), value: "bot" },
     { label: t("filterOpen"), value: "open" },
     { label: t("filterPending"), value: "pending" },
     { label: t("filterClosed"), value: "closed" },
@@ -163,6 +184,17 @@ export function ConversationList({
 
     if (filter === "unread") {
       result = result.filter((c) => c.unread_count > 0);
+    } else if (filter === "bot") {
+      result = result.filter((c) => c.bot_active);
+    } else if (filter === "mine") {
+      // Before auth resolves, userId is null and this matches nothing —
+      // an empty list is the honest answer to "what's assigned to me?"
+      // while we don't yet know who "me" is.
+      result = result.filter((c) => !!userId && c.assigned_agent_id === userId);
+    } else if (filter === "unassigned") {
+      result = result.filter((c) => !c.assigned_agent_id);
+    } else if (filter === "waiting") {
+      result = result.filter(isWaitingOnUs);
     } else if (filter !== "all") {
       result = result.filter((c) => c.status === filter);
     }
@@ -188,7 +220,7 @@ export function ConversationList({
     }
 
     return result;
-  }, [conversations, filter, search, selectedTagIds, selectedCompany]);
+  }, [conversations, filter, search, selectedTagIds, selectedCompany, userId]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -217,6 +249,76 @@ export function ConversationList({
     [onSelect]
   );
 
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * Keyboard shortcuts: j / k walk the visible list, `/` jumps to
+   * search, Escape leaves it, `e` closes the open thread. Bound on
+   * window rather than the list container so they work no matter which
+   * pane last had focus — with the usual guard so they never fire while
+   * someone is typing a message.
+   */
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      // An open dialog (template picker, media lightbox, confirm) owns
+      // the keyboard — `e` there must not quietly close the thread
+      // behind it.
+      if (document.querySelector('[role="dialog"]')) return;
+
+      const el = e.target as HTMLElement | null;
+      const typing =
+        !!el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.isContentEditable);
+
+      if (e.key === "Escape" && el === searchRef.current) {
+        searchRef.current?.blur();
+        return;
+      }
+      if (typing) return;
+
+      if (e.key === "/") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+
+      if (e.key === "e") {
+        onCloseActive?.();
+        return;
+      }
+
+      if (e.key !== "j" && e.key !== "k") return;
+      if (filtered.length === 0) return;
+      e.preventDefault();
+
+      const current = filtered.findIndex((c) => c.id === activeConversationId);
+      // Nothing selected yet (or the selection is filtered out): j opens
+      // the top of the list, k the bottom.
+      const next =
+        current === -1
+          ? e.key === "j"
+            ? 0
+            : filtered.length - 1
+          : Math.min(Math.max(current + (e.key === "j" ? 1 : -1), 0), filtered.length - 1);
+
+      const target = filtered[next];
+      if (!target || target.id === activeConversationId) return;
+      onSelect(target);
+      // Every row is rendered, so the element exists before the click
+      // handler's state update lands — scroll it into view directly.
+      document
+        .getElementById(`conv-${target.id}`)
+        ?.scrollIntoView({ block: "nearest" });
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [filtered, activeConversationId, onSelect, onCloseActive]);
+
   const activeFilter = FILTER_OPTIONS.find((o) => o.value === filter);
 
   return (
@@ -229,6 +331,7 @@ export function ConversationList({
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
+            ref={searchRef}
             value={search}
             onChange={handleSearchChange}
             placeholder={t("searchPlaceholder")}
@@ -450,8 +553,16 @@ function ConversationItem({
       })
     : "";
 
+  // How long the customer has been waiting. Strict (no "about") because
+  // this is the number an agent triages on.
+  const waitingFor =
+    isWaitingOnUs(conversation) && conversation.last_message_at
+      ? formatDistanceToNowStrict(new Date(conversation.last_message_at))
+      : null;
+
   return (
     <button
+      id={`conv-${conversation.id}`}
       onClick={handleClick}
       className={cn(
         "flex w-full items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50",
@@ -484,6 +595,30 @@ function ConversationItem({
             {conversation.last_message_text || t("noMessagesYet")}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
+            {/* Unanswered-since. Survives the thread being read, which
+                unread_count does not — the forgotten-but-read thread is
+                exactly the one worth surfacing. */}
+            {waitingFor && (
+              <span
+                className="flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/20 dark:text-amber-300"
+                title={t("waitingSince", { duration: waitingFor })}
+              >
+                <Clock className="h-2.5 w-2.5" />
+                {waitingFor}
+              </span>
+            )}
+            {/* A live flow run means the bot is mid-conversation. Without
+                this an agent can start typing over the top of it and the
+                customer hears two voices. */}
+            {conversation.bot_active && (
+              <span
+                className="flex items-center gap-0.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-500/20 dark:text-violet-300"
+                title={t("botHandling")}
+              >
+                <Bot className="h-2.5 w-2.5" />
+                {t("botBadge")}
+              </span>
+            )}
             {conversation.unread_count > 0 && (
               <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
                 {conversation.unread_count}

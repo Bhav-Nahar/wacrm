@@ -20,6 +20,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api';
 import { decrypt } from '@/lib/whatsapp/encryption';
+import { humanizeMetaError } from '@/lib/whatsapp/whatsapp-errors';
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -301,7 +302,12 @@ export async function deliverBroadcast(
         .from('broadcast_recipients')
         .update({
           status: 'failed',
-          error_message: lastError || 'Unknown error',
+          // Shown per recipient in the broadcast detail page. A campaign that
+          // failed for every contact because the WABA has no payment method
+          // reads as 500 rows of "(#131042) Invalid parameter" without this.
+          error_message: lastError
+            ? humanizeMetaError(lastError)
+            : 'Unknown error',
         })
         .eq('id', recipient.recipientRowId);
     }

@@ -42,7 +42,11 @@ const SECURITY_HEADERS = [
       // Next.js needs 'unsafe-inline' for its inline hydration script
       // and 'unsafe-eval' in dev + some production optimisations.
       // Nonce-based CSP is a later project.
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      // connect.facebook.net serves the Facebook JS SDK, which Embedded
+      // Signup requires — the signup popup IS Meta's, there is no
+      // self-hosted alternative. Only reached on Settings -> WhatsApp, and
+      // the script is loaded on demand rather than in the app shell.
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://connect.facebook.net",
       // Tailwind + inline style attributes on lots of components.
       "style-src 'self' 'unsafe-inline'",
       // Supabase public-bucket avatars, contact avatars (arbitrary
@@ -53,9 +57,14 @@ const SECURITY_HEADERS = [
       // and Supabase public-bucket audio/video the inbox renders.
       "media-src 'self' blob: https://*.supabase.co",
       "font-src 'self' data:",
-      // Supabase REST + realtime (WSS). All Meta API calls happen
-      // server-side, so graph.facebook.com does not belong here.
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+      // Supabase REST + realtime (WSS), plus the Facebook JS SDK's own
+      // XHRs during Embedded Signup. Our Meta *API* calls still happen
+      // server-side — graph.facebook.com is here for the SDK, not for us.
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://connect.facebook.net https://www.facebook.com https://graph.facebook.com",
+      // The SDK plants a hidden iframe on facebook.com for cross-window
+      // state. Without this, default-src 'self' blocks it and the signup
+      // popup cannot report its result back.
+      "frame-src 'self' https://www.facebook.com https://web.facebook.com https://staticxx.facebook.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",

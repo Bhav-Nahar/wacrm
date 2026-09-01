@@ -56,6 +56,34 @@ describe("resolveFallbackPolicy", () => {
       DEFAULT_FALLBACK_POLICY,
     );
   });
+
+  it("defaults on_timeout to 'end' so existing flows keep the old sweep", () => {
+    expect(resolveFallbackPolicy({}).on_timeout).toBe("end");
+    expect(resolveFallbackPolicy({ on_timeout: "nonsense" as never }).on_timeout).toBe(
+      "end",
+    );
+  });
+
+  it("honours on_timeout: 'handoff'", () => {
+    expect(resolveFallbackPolicy({ on_timeout: "handoff" }).on_timeout).toBe(
+      "handoff",
+    );
+  });
+
+  it("leaves the nudge off unless a flow opts in", () => {
+    expect(resolveFallbackPolicy({}).nudge_hours).toBe(0);
+    expect(resolveFallbackPolicy({ nudge_hours: -1 }).nudge_hours).toBe(0);
+    expect(resolveFallbackPolicy({ nudge_hours: 23 }).nudge_hours).toBe(23);
+  });
+
+  it("falls back to the default nudge text rather than sending an empty message", () => {
+    expect(resolveFallbackPolicy({ nudge_text: "   " }).nudge_text).toBe(
+      DEFAULT_FALLBACK_POLICY.nudge_text,
+    );
+    expect(resolveFallbackPolicy({ nudge_text: "Still there?" }).nudge_text).toBe(
+      "Still there?",
+    );
+  });
 });
 
 const POLICY_REPROMPT_2_HANDOFF: FlowFallbackPolicy = {
@@ -63,6 +91,9 @@ const POLICY_REPROMPT_2_HANDOFF: FlowFallbackPolicy = {
   max_reprompts: 2,
   on_timeout_hours: 24,
   on_exhaust: "handoff",
+  on_timeout: "end",
+  nudge_hours: 0,
+  nudge_text: "",
 };
 
 describe("decideFallback", () => {

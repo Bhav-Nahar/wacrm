@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
 import { useTranslations } from "next-intl";
+import { formatPhoneForDisplay } from "@/lib/whatsapp/phone-utils";
 
 interface ContactSidebarProps {
   contact: Contact | null;
@@ -27,7 +28,6 @@ interface ContactSidebarProps {
 
 export function ContactSidebar({ contact }: ContactSidebarProps) {
   const tSidebar = useTranslations("Inbox.sidebar");
-  const tThread = useTranslations("Inbox.messageThread");
 
   const { accountId } = useAuth();
   const [copied, setCopied] = useState(false);
@@ -119,13 +119,12 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     setAddingNote(false);
   }, [contact, newNote, accountId]);
 
-  if (!contact) {
-    return (
-      <div className="flex h-full w-70 items-center justify-center border-l border-border bg-card">
-        <p className="text-sm text-muted-foreground">{tThread("selectConversation")}</p>
-      </div>
-    );
-  }
+  // Render nothing until a conversation is picked. This panel used to show its
+  // own "Select a conversation" line, which put the same sentence on screen
+  // twice — once properly centred in the thread pane, once stranded in a
+  // narrow empty column beside it. With the panel gone the thread's empty
+  // state gets the full width and reads as one deliberate screen.
+  if (!contact) return null;
 
   const displayName = contact.name || contact.phone;
   const initials = displayName.charAt(0).toUpperCase();
@@ -162,7 +161,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted"
             >
               <Phone className="h-4 w-4 text-muted-foreground" />
-              <span className="flex-1 text-left">{contact.phone}</span>
+              <span className="flex-1 text-left">{formatPhoneForDisplay(contact.phone)}</span>
               {copied ? (
                 <Check className="h-3 w-3 text-primary" />
               ) : (

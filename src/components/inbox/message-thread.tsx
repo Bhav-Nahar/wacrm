@@ -453,6 +453,17 @@ export function MessageThread({
       .then(({ error }) => {
         if (error) console.error("Failed to reset unread_count:", error);
       });
+
+    // Blue ticks. The customer has no way of knowing we read their
+    // message unless we tell Meta, and "seen" is most of what someone
+    // waiting on a reply actually wants. Fire-and-forget: the route
+    // swallows every Meta-side refusal, and a failed receipt must not
+    // affect the thread the agent is reading.
+    void fetch("/api/whatsapp/read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversation_id: conversationId }),
+    }).catch(() => {});
   }, [conversationId, hasUnread]);
 
   // Auto-scroll to bottom on new messages

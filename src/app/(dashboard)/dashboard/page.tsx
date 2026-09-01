@@ -29,6 +29,7 @@ import type {
 import { MetricCard } from '@/components/dashboard/metric-card'
 import { SkeletonCard } from '@/components/dashboard/skeleton'
 import { QuickActions } from '@/components/dashboard/quick-actions'
+import { FirstRunChecklist } from '@/components/dashboard/first-run-checklist'
 import { ConversationsChart } from '@/components/dashboard/conversations-chart'
 import { PipelineDonut } from '@/components/dashboard/pipeline-donut'
 import { ResponseTimeChart } from '@/components/dashboard/response-time-chart'
@@ -130,6 +131,11 @@ export default function DashboardPage() {
           {t('description')}
         </p>
       </div>
+
+      {/* Setup guidance. Renders nothing once WhatsApp is connected, contacts
+          exist and something has been sent — so it costs an established
+          account one query and no pixels. */}
+      <FirstRunChecklist />
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
