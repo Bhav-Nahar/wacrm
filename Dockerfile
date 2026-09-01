@@ -6,7 +6,9 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# node:20-alpine ships npm 10; the lockfile is written by npm 11, which
+# encodes optional platform deps differently. Match it or `npm ci` fails.
+RUN npm install -g npm@11.6.2 && npm ci
 
 # ---------------------------------------------------------------
 # Stage 2 — build
