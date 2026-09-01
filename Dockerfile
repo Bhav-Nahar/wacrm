@@ -50,6 +50,13 @@ COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nextjs /app/public ./public
 
+# Migration runner (Railway pre-deploy: node scripts/migrate.mjs).
+# `pg` is installed here rather than in package.json because the app
+# itself never imports it, so Next's standalone trace would drop it.
+COPY --from=builder --chown=nextjs:nextjs /app/scripts/migrate.mjs ./scripts/migrate.mjs
+COPY --from=builder --chown=nextjs:nextjs /app/supabase/migrations ./supabase/migrations
+RUN npm install --no-save --no-audit --no-fund pg@8
+
 USER nextjs
 EXPOSE 3000
 CMD ["node", "server.js"]
