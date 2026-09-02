@@ -24,7 +24,12 @@
  * renders the advanced rows.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  formFieldsSignature,
+  validateFormFields,
+  type FormField,
+} from "@/lib/whatsapp/flow-json";
 import {
   Loader2,
   Paperclip,
@@ -887,7 +892,22 @@ interface SendFormCfg {
   footer_text?: string;
   var_prefix?: string;
   next_node_key?: string;
+  // Authored here rather than in Meta's Flow Builder.
+  form_fields?: FormField[];
+  submit_label?: string;
+  form_title?: string;
+  published_signature?: string;
 }
+
+const FIELD_TYPES: FormField["type"][] = [
+  "text",
+  "email",
+  "number",
+  "phone",
+  "textarea",
+  "dropdown",
+  "date",
+];
 
 // Meta's ceiling for any interactive button label, CTA included.
 const CTA_MAX = 20;
@@ -926,33 +946,14 @@ function SendFormForm({
         onChange={(v) => onUpdateConfig({ body_text: v })}
         rows={2}
       />
-      <div>
-        <label className="mb-1 block text-xs text-muted-foreground">
-          {t("metaFlowIdLabel")}
-        </label>
-        <Input
-          value={cfg.meta_flow_id ?? ""}
-          onChange={(e) =>
-            onUpdateConfig({ meta_flow_id: e.target.value.trim() })
-          }
-          placeholder="1234567890123456"
-          className="bg-muted font-mono"
-        />
-        <p className="mt-1 text-[11px] text-muted-foreground">
-          {t("metaFlowIdHint")}
-        </p>
-      </div>
-      <div>
-        <label className="mb-1 block text-xs text-muted-foreground">
-          {t("screenIdLabel")}
-        </label>
-        <Input
-          value={cfg.screen_id ?? ""}
-          onChange={(e) => onUpdateConfig({ screen_id: e.target.value.trim() })}
-          placeholder="WELCOME"
-          className="bg-muted font-mono"
-        />
-      </div>
+      {/* The form itself. Authoring the fields here is what keeps the
+          user out of Meta's Flow Builder — on save we generate the Flow
+          JSON, create the Flow and publish it. */}
+      <FormFieldsEditor
+        cfg={cfg}
+        onUpdateConfig={onUpdateConfig}
+        t={t}
+      />
       <div>
         <label className="mb-1 block text-xs text-muted-foreground">
           {t("ctaLabelLabel")}
@@ -1008,6 +1009,209 @@ function SendFormForm({
         </>
       ) : null}
     </>
+  );
+}
+
+/**
+ * Field-list editor plus the publish round trip.
+ *
+ * A published Meta Flow is immutable — it can be deprecated, never
+ * edited — so "save" here means mint a new Flow and retire the old one.
+ * That is expensive enough that we only do it when the fields actually
+ * changed, which is what `published_signature` is for.
+ */
+function FormFieldsEditor({
+  cfg,
+  onUpdateConfig,
+  t,
+}: {
+  cfg: SendFormCfg;
+  onUpdateConfig: (patch: Record<string, unknown>) => void;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  const [publishing, setPublishing] = useState(false);
+  // `?? []` allocates a fresh array every render, which would make the
+  // publish callback's identity change on every keystroke.
+  const fields = useMemo(() => cfg.form_fields ?? [], [cfg.form_fields]);
+  const submitLabel = cfg.submit_label || "Submit";
+
+  const currentSignature = formFieldsSignature(
+    fields,
+    submitLabel,
+    cfg.form_title,
+  );
+  const isPublished = Boolean(cfg.meta_flow_id);
+  const needsPublish =
+    fields.length > 0 && currentSignature !== cfg.published_signature;
+
+  const patchFields = useCallback(
+    (next: FormField[]) => onUpdateConfig({ form_fields: next }),
+    [onUpdateConfig],
+  );
+
+  const publish = useCallback(async () => {
+    const check = validateFormFields(fields, submitLabel);
+    if (!check.ok) {
+      toast.error(check.errors[0]);
+      return;
+    }
+    setPublishing(true);
+    try {
+      const res = await fetch("/api/whatsapp/forms/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          form_fields: fields,
+          submit_label: submitLabel,
+          form_title: cfg.form_title,
+          name: cfg.form_title || "wacrm form",
+          // So the route can retire whatever this node pointed at.
+          previous_flow_id: cfg.meta_flow_id || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data?.error ?? "Could not create the form.");
+        return;
+      }
+      // One patch, so the node never renders half-published.
+      onUpdateConfig({
+        meta_flow_id: data.meta_flow_id,
+        screen_id: data.screen_id,
+        published_signature: data.published_signature,
+      });
+      toast.success(t("formPublished"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not create the form.");
+    } finally {
+      setPublishing(false);
+    }
+  }, [fields, submitLabel, cfg.form_title, cfg.meta_flow_id, onUpdateConfig, t]);
+
+  return (
+    <div className="rounded-md border border-border bg-muted/40 p-2">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-medium">{t("formFieldsLabel")}</span>
+        <button
+          type="button"
+          onClick={() =>
+            patchFields([
+              ...fields,
+              {
+                name: `field_${fields.length + 1}`,
+                label: "",
+                type: "text",
+                required: true,
+              },
+            ])
+          }
+          className="text-primary text-xs hover:underline"
+        >
+          + {t("addField")}
+        </button>
+      </div>
+
+      {fields.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground">{t("noFieldsYet")}</p>
+      ) : (
+        <div className="space-y-2">
+          {fields.map((f, i) => (
+            <div key={i} className="rounded border border-border bg-card p-2">
+              <div className="flex gap-1.5">
+                <Input
+                  value={f.label}
+                  placeholder={t("fieldLabelPlaceholder")}
+                  onChange={(e) => {
+                    const next = [...fields];
+                    next[i] = { ...f, label: e.target.value };
+                    patchFields(next);
+                  }}
+                  className="bg-muted h-8 text-xs"
+                />
+                <select
+                  value={f.type}
+                  onChange={(e) => {
+                    const next = [...fields];
+                    next[i] = {
+                      ...f,
+                      type: e.target.value as FormField["type"],
+                    };
+                    patchFields(next);
+                  }}
+                  className="bg-muted border-border h-8 rounded border px-1 text-xs"
+                >
+                  {FIELD_TYPES.map((ft) => (
+                    <option key={ft} value={ft}>
+                      {t(`fieldType.${ft}`)}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  aria-label={t("removeField")}
+                  onClick={() => patchFields(fields.filter((_, j) => j !== i))}
+                  className="text-muted-foreground hover:text-destructive px-1 text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {f.type === "dropdown" ? (
+                <Input
+                  value={(f.options ?? []).join(", ")}
+                  placeholder={t("optionsPlaceholder")}
+                  onChange={(e) => {
+                    const next = [...fields];
+                    next[i] = {
+                      ...f,
+                      options: e.target.value
+                        .split(",")
+                        .map((o) => o.trim())
+                        .filter(Boolean),
+                    };
+                    patchFields(next);
+                  }}
+                  className="bg-muted mt-1.5 h-8 text-xs"
+                />
+              ) : null}
+
+              <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={f.required ?? false}
+                  onChange={(e) => {
+                    const next = [...fields];
+                    next[i] = { ...f, required: e.target.checked };
+                    patchFields(next);
+                  }}
+                />
+                {t("fieldRequired")}
+                <span className="ml-auto font-mono">{`{{vars.${f.name}}}`}</span>
+              </label>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          disabled={publishing || fields.length === 0 || !needsPublish}
+          onClick={publish}
+          className="bg-primary text-primary-foreground inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium disabled:opacity-50"
+        >
+          {publishing ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+          {isPublished ? t("republishForm") : t("publishForm")}
+        </button>
+        <span className="text-[11px] text-muted-foreground">
+          {!isPublished
+            ? t("formNotPublished")
+            : needsPublish
+              ? t("formNeedsRepublish")
+              : t("formPublishedOk")}
+        </span>
+      </div>
+    </div>
   );
 }
 

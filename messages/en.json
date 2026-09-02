@@ -1197,7 +1197,29 @@
         "ctaLabelLabel": "Button label",
         "afterSubmit": "After the customer submits, advance to",
         "varPrefixLabel": "Variable prefix (optional)",
-        "varPrefixHint": "Prepended to every submitted field name. Use it when two forms in one flow collect the same field."
+        "varPrefixHint": "Prepended to every submitted field name. Use it when two forms in one flow collect the same field.",
+        "formFieldsLabel": "Form fields",
+        "addField": "Add field",
+        "removeField": "Remove field",
+        "noFieldsYet": "No fields yet. Add one and we'll build the WhatsApp form for you.",
+        "fieldLabelPlaceholder": "What the customer sees, e.g. Your email",
+        "fieldRequired": "Required",
+        "optionsPlaceholder": "Options, comma separated",
+        "publishForm": "Create form in WhatsApp",
+        "republishForm": "Update form in WhatsApp",
+        "formNotPublished": "Not created yet",
+        "formNeedsRepublish": "Fields changed — update to apply",
+        "formPublishedOk": "Up to date",
+        "formPublished": "Form created in WhatsApp.",
+        "fieldType": {
+          "text": "Text",
+          "email": "Email",
+          "number": "Number",
+          "phone": "Phone",
+          "textarea": "Long text",
+          "dropdown": "Dropdown",
+          "date": "Date"
+        }
       },
       "categories": {
         "messaging": "Messaging",

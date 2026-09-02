@@ -1006,6 +1006,165 @@ export async function sendInteractiveList(
   return { messageId: data.messages[0].id }
 }
 
+// ============================================================
+// Flows lifecycle — create / publish / list / deprecate.
+//
+// This is what lets a wacrm user author a form without opening Meta's
+// Flow Builder: we generate the Flow JSON (see flow-json.ts), create
+// the Flow, and publish it.
+//
+// The load-bearing constraint: publishing is IRREVERSIBLE. Meta's docs
+// are explicit — "once a Flow is published, it cannot be modified or
+// deleted". A published Flow can only be deprecated. So editing a form
+// means create + publish a replacement, repoint the node, deprecate the
+// old one; it never means updating in place.
+// ============================================================
+
+export interface FlowSummary {
+  id: string
+  name: string
+  /** DRAFT | PUBLISHED | DEPRECATED | BLOCKED | THROTTLED */
+  status: string
+  categories: string[]
+  validation_errors: unknown[]
+}
+
+/**
+ * Meta requires at least one category on a Flow. 'OTHER' is the
+ * honest answer for a form whose purpose we cannot infer from a field
+ * list, and it carries no functional difference — categories are
+ * discovery metadata, not behaviour.
+ */
+export const DEFAULT_FLOW_CATEGORY = 'OTHER'
+
+export interface CreateFlowArgs {
+  wabaId: string
+  accessToken: string
+  name: string
+  /** The object from buildFlowJson; serialised here, not by the caller. */
+  flowJson: Record<string, unknown>
+  categories?: string[]
+}
+
+/**
+ * Create a Flow as a DRAFT. Publishing is a separate call, so a
+ * generated Flow that fails Meta's validation never becomes permanent.
+ *
+ * Needs `whatsapp_business_management` on the WABA. A token without it
+ * fails here rather than at publish time.
+ */
+export async function createFlow(
+  args: CreateFlowArgs
+): Promise<{ id: string; validationErrors: unknown[] }> {
+  const { wabaId, accessToken, name, flowJson, categories } = args
+  if (!wabaId) throw new Error('createFlow requires a wabaId.')
+  if (!name?.trim()) throw new Error('createFlow requires a name.')
+
+  const body = new URLSearchParams({
+    name,
+    categories: JSON.stringify(categories ?? [DEFAULT_FLOW_CATEGORY]),
+    flow_json: JSON.stringify(flowJson),
+  })
+
+  const response = await fetch(`${META_API_BASE}/${wabaId}/flows`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body,
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = await response.json()
+  if (!data?.id) {
+    throw new Error('Meta accepted the Flow create but returned no id.')
+  }
+  return { id: data.id, validationErrors: data.validation_errors ?? [] }
+}
+
+/**
+ * Publish a draft Flow so it can be sent to real recipients.
+ *
+ * Irreversible. Only call this once the JSON is what the user wants —
+ * there is no edit afterwards, only `deprecateFlow` plus a replacement.
+ */
+export async function publishFlow(args: {
+  flowId: string
+  accessToken: string
+}): Promise<void> {
+  const { flowId, accessToken } = args
+  if (!flowId) throw new Error('publishFlow requires a flowId.')
+  const response = await fetch(`${META_API_BASE}/${flowId}/publish`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+}
+
+/**
+ * Retire a published Flow. The only way to "remove" one — Meta refuses
+ * DELETE on anything past DRAFT.
+ *
+ * Best-effort by design at the call site: failing to retire the old
+ * Flow must never fail the user's save, because the NEW Flow is already
+ * published and the node already points at it. A stray deprecated Flow
+ * is clutter; a save that reports failure after succeeding is a bug.
+ */
+export async function deprecateFlow(args: {
+  flowId: string
+  accessToken: string
+}): Promise<void> {
+  const { flowId, accessToken } = args
+  if (!flowId) throw new Error('deprecateFlow requires a flowId.')
+  const response = await fetch(`${META_API_BASE}/${flowId}/deprecate`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+}
+
+/** Delete a DRAFT Flow. Meta rejects this for any other status. */
+export async function deleteDraftFlow(args: {
+  flowId: string
+  accessToken: string
+}): Promise<void> {
+  const { flowId, accessToken } = args
+  if (!flowId) throw new Error('deleteDraftFlow requires a flowId.')
+  const response = await fetch(`${META_API_BASE}/${flowId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+}
+
+/** List a WABA's Flows. Used to show the user what already exists. */
+export async function listFlows(args: {
+  wabaId: string
+  accessToken: string
+}): Promise<FlowSummary[]> {
+  const { wabaId, accessToken } = args
+  if (!wabaId) throw new Error('listFlows requires a wabaId.')
+  const response = await fetch(`${META_API_BASE}/${wabaId}/flows`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = await response.json()
+  // Single page is enough: a WABA's Flow count is small, and paging
+  // would only matter for an account with hundreds of forms.
+  // ponytail: no cursor following — add it if a real account outgrows one page.
+  return (data?.data ?? []) as FlowSummary[]
+}
+
 export interface SendFlowMessageArgs {
   phoneNumberId: string
   accessToken: string
