@@ -9,6 +9,37 @@ Versions follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Pre-1.0, `MINOR` bumps cover new modules; `PATCH` bumps cover bug fixes
 and polish.
 
+## [0.10.1] — 2026-09-02
+
+### Fixed
+
+- **A tap on a finished flow's menu no longer does nothing.** The
+  message we send stays in the customer's chat forever, so a
+  buttons/list prompt is still tappable after the run that sent it
+  ended. That tap found no *active* run, fell through to the entry
+  trigger — which a row title like "Aluminium" never matches — and was
+  dropped in silence.
+
+  Reported from a live flow: a material list where Glass declines and
+  walks to an `end` node. The customer taps Glass, gets the polite
+  decline, then taps a metal from the same list and nothing happens.
+  It was never glass-specific — every ending had it, including the
+  normal handoff path.
+
+  A tap that matches an option on the last prompt of a run that ended
+  within 24h now revives that run and advances down the tapped branch.
+  The window matches WhatsApp's customer-service window: outside it a
+  reply needs a paid template the runner cannot send, so reviving a run
+  we then could not talk on would strand the customer mid-flow.
+
+  Only runs that ended on their own terms are revived — `completed` and
+  `timed_out`. A `handed_off` or `paused_by_agent` run is left alone: a
+  human owns that thread, and the bot cutting back in mid-conversation
+  is worse than an inert tap, which still lands in the inbox as a
+  normal message. `failed` is excluded too — reopening walks straight
+  back into whatever broke. A run whose flow has since been paused or
+  archived is not revived either.
+
 ## [0.10.0] — 2026-08-31
 
 Native WhatsApp Flows: collect a form's worth of answers in one

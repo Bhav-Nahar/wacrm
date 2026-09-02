@@ -253,6 +253,118 @@ async function loadActiveRunForContact(
   return rows[0] ?? null;
 }
 
+/**
+ * How long after a run ends a stale menu tap can still revive it.
+ *
+ * 24h deliberately matches WhatsApp's customer-service window: inside
+ * it we can reply freely, outside it a reply needs a paid template the
+ * runner cannot send. Reviving a run we then can't talk on would strand
+ * the customer mid-flow, so the window and our ability to answer end
+ * together.
+ */
+const REOPEN_WINDOW_HOURS = 24;
+
+/**
+ * Revive a recently-ended run when the customer taps an option on its
+ * last prompt.
+ *
+ * The message we sent stays in the customer's chat forever, so a
+ * buttons/list prompt is tappable long after the run that sent it
+ * finished. Without this, that tap hit `loadActiveRunForContact`
+ * (active-only), found nothing, fell through to the entry trigger —
+ * which a row title like "Aluminium" never matches — and was silently
+ * dropped. The customer saw their tap do nothing.
+ *
+ * Only revives runs that ended on their OWN terms:
+ *   - completed  — reached an end node
+ *   - timed_out  — swept by the cron; the customer came back
+ *
+ * Deliberately NOT revived:
+ *   - handed_off / paused_by_agent — a human owns the thread; the bot
+ *     cutting back in mid-conversation is worse than an inert tap,
+ *     which at least lands in the inbox as a normal message.
+ *   - failed — reopening walks straight back into whatever broke.
+ *
+ * Returns null when nothing should be revived, leaving the caller's
+ * existing entry-trigger path untouched.
+ */
+async function tryReopenEndedRun(
+  db: AdminClient,
+  accountId: string,
+  contactId: string,
+  replyId: string,
+): Promise<{ run: FlowRunRow; nodes: Map<string, FlowNodeRow>; nextKey: string } | null> {
+  const cutoff = new Date(
+    Date.now() - REOPEN_WINDOW_HOURS * 60 * 60 * 1000,
+  ).toISOString();
+
+  const { data, error } = await db
+    .from("flow_runs")
+    .select("*")
+    .eq("account_id", accountId)
+    .eq("contact_id", contactId)
+    .in("status", ["completed", "timed_out"])
+    .gte("ended_at", cutoff)
+    .order("ended_at", { ascending: false })
+    .limit(1);
+  if (error) {
+    console.error("[flows] tryReopenEndedRun load error:", error.message);
+    return null;
+  }
+  const run = ((data as FlowRunRow[] | null) ?? [])[0] ?? null;
+  if (!run || !run.current_node_key) return null;
+  // Both are required by every engine send; a run whose contact or
+  // conversation was deleted can't be continued.
+  if (!run.contact_id || !run.conversation_id) return null;
+
+  // Don't resurrect a run belonging to a flow that has since been
+  // paused or archived — deactivating a flow has to actually stop it.
+  const flow = await loadFlow(db, run.flow_id);
+  if (!flow || flow.status !== "active") return null;
+
+  const nodes = await loadAllNodes(db, run.flow_id);
+  const node = nodes.get(run.current_node_key) ?? null;
+  if (!node) return null;
+
+  // Only a tap that matches an option on the last prompt revives the
+  // run. An unrelated tap (or a stale id from an older prompt) is not
+  // an answer to anything and must fall through.
+  const nextKey = matchReplyId(node, replyId);
+  if (!nextKey) return null;
+
+  // Flip back to active, guarding on the status we read. If the cron
+  // or another webhook changed it underneath us, we lose and bail.
+  // reprompt_count resets: this is a fresh answer, not a retry.
+  const { data: revived, error: upErr } = await db
+    .from("flow_runs")
+    .update({
+      status: "active",
+      ended_at: null,
+      end_reason: null,
+      reprompt_count: 0,
+      last_advanced_at: new Date().toISOString(),
+    })
+    .eq("id", run.id)
+    .eq("status", run.status)
+    .select("id");
+  if (upErr) {
+    // 23505 = the partial unique index on (account_id, contact_id)
+    // WHERE status='active' — a concurrent inbound started a new run
+    // between our SELECT and here. That run is the live one; drop this.
+    if ((upErr as { code?: string }).code !== "23505") {
+      console.error("[flows] tryReopenEndedRun update error:", upErr.message);
+    }
+    return null;
+  }
+  if (!revived || revived.length === 0) return null;
+
+  return {
+    run: { ...run, status: "active", reprompt_count: 0 },
+    nodes,
+    nextKey,
+  };
+}
+
 async function loadFlow(
   db: AdminClient,
   flowId: string,
@@ -1046,6 +1158,43 @@ export async function dispatchInboundToFlows(
       // in-memory. See loadAllNodes.
       const nodes = await loadAllNodes(db, activeRun.flow_id);
       return handleReplyForActiveRun(db, activeRun, input.message, nodes);
+    }
+
+    // No active run. Before treating this as a brand-new conversation,
+    // check whether it's a late tap on the last prompt of a run that
+    // recently ended — the message is still in the customer's chat.
+    if (input.message.kind === "interactive_reply") {
+      const reopened = await tryReopenEndedRun(
+        db,
+        input.accountId,
+        input.contactId,
+        input.message.reply_id,
+      );
+      if (reopened) {
+        await logEvent(
+          db,
+          reopened.run.id,
+          "reply_received",
+          reopened.run.current_node_key,
+          {
+            meta_message_id: input.message.meta_message_id,
+            reply_kind: "interactive_reply",
+            reply_id: input.message.reply_id,
+            reopened_after_end: true,
+          },
+        );
+        const outcome = await advanceFromNodeKey(
+          db,
+          reopened.run,
+          reopened.nextKey,
+          reopened.nodes,
+        );
+        return {
+          consumed: true,
+          flow_run_id: reopened.run.id,
+          outcome: outcome.outcome,
+        };
+      }
     }
 
     // No active run → look for a flow whose entry trigger matches.
