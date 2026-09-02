@@ -1225,6 +1225,10 @@
           "label": "Send media",
           "blurb": "Sends an image, video, or document"
         },
+        "send_form": {
+          "label": "Send form",
+          "blurb": "Opens a native WhatsApp form, saves every answer"
+        },
         "collect_input": {
           "label": "Collect input",
           "blurb": "Asks a question, saves the reply"
