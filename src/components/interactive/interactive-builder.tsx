@@ -147,11 +147,14 @@ export function InteractiveBuilder({
             </Field>
           </div>
 
+          {/* `form` payloads are authored on a flow's send_form node,
+              never in this composer — so only the two hand-editable
+              kinds get an editor here. */}
           {value.kind === "buttons" ? (
             <ButtonsEditor value={value} onChange={onChange} advanced={advanced} />
-          ) : (
+          ) : value.kind === "list" ? (
             <ListEditor value={value} onChange={onChange} advanced={advanced} />
-          )}
+          ) : null}
 
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <input

@@ -1,6 +1,6 @@
 "use client";
 
-import { List, Reply } from "lucide-react";
+import { ClipboardList, List, Reply } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { InteractiveMessagePayload } from "@/lib/whatsapp/interactive";
 
@@ -60,7 +60,7 @@ export function InteractivePreview({
             </button>
           ))}
         </div>
-      ) : (
+      ) : payload.kind === "list" ? (
         <button
           type="button"
           disabled
@@ -68,6 +68,18 @@ export function InteractivePreview({
         >
           <List className="h-3.5 w-3.5" />
           <span className="truncate">{payload.button_label || "Menu"}</span>
+        </button>
+      ) : (
+        /* Native WhatsApp Flow. The CTA opens a form sheet over the
+           chat rather than sending a reply, so there is nothing to
+           preview beyond the button itself. */
+        <button
+          type="button"
+          disabled
+          className="flex w-full items-center justify-center gap-1.5 border-t border-border py-2 text-sm font-medium text-primary"
+        >
+          <ClipboardList className="h-3.5 w-3.5" />
+          <span className="truncate">{payload.cta_label || "Open form"}</span>
         </button>
       )}
     </div>

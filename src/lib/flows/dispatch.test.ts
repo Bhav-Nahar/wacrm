@@ -35,6 +35,11 @@ vi.mock("./admin-client", () => {
       select: () => b,
       eq: () => b,
       in: () => b,
+      // The reopen lookup bounds its window with .gte('ended_at', …).
+      // Without this the chain threw, and dispatch's try/catch turned
+      // that into a silent {consumed:false} — which is what these
+      // tests started reporting.
+      gte: () => b,
       filter: () => b,
       order: () => b,
       limit: () => b,

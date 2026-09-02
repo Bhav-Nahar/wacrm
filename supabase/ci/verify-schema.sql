@@ -42,6 +42,38 @@ BEGIN
     RAISE EXCEPTION 'public.accounts is missing — migration 017 did not apply';
   END IF;
 
+  -- 042: the column is ADD COLUMN IF NOT EXISTS and the backfill is a
+  -- plain UPDATE, so a mistyped table name applies "successfully" and
+  -- leaves the inbox's Waiting filter reading a column that isn't there.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'conversations'
+      AND column_name = 'last_message_from'
+  ) THEN
+    RAISE EXCEPTION
+      'conversations.last_message_from is missing — migration 042 did not apply';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'trg_conversation_last_message_from'
+  ) THEN
+    RAISE EXCEPTION
+      'trg_conversation_last_message_from is missing — migration 042 did not apply';
+  END IF;
+
+  -- 043: send_form must be an accepted node_type, or saving a form node
+  -- fails at runtime with a constraint violation the builder cannot
+  -- explain.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'flow_nodes_node_type_check'
+      AND pg_get_constraintdef(oid) LIKE '%send_form%'
+  ) THEN
+    RAISE EXCEPTION
+      'flow_nodes_node_type_check does not accept send_form — migration 043 did not apply';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

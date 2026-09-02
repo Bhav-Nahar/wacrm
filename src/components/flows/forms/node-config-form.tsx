@@ -130,6 +130,18 @@ export function NodeConfigForm({
         />
       );
 
+    case "send_form":
+      return (
+        <SendFormForm
+          cfg={cfg as SendFormCfg}
+          allNodes={allNodes}
+          currentKey={node.node_key}
+          onUpdateConfig={onUpdateConfig}
+          showAdvanced={showAdvanced}
+          t={t}
+        />
+      );
+
     case "collect_input":
       return (
         <>
@@ -860,6 +872,143 @@ function useUserTags(): UserTag[] {
     };
   }, []);
   return tags;
+}
+
+// ============================================================
+// send_form — native WhatsApp Flow (Meta's in-app form sheet)
+// ============================================================
+
+interface SendFormCfg {
+  body_text?: string;
+  meta_flow_id?: string;
+  cta_label?: string;
+  screen_id?: string;
+  header_text?: string;
+  footer_text?: string;
+  var_prefix?: string;
+  next_node_key?: string;
+}
+
+// Meta's ceiling for any interactive button label, CTA included.
+const CTA_MAX = 20;
+
+/**
+ * The Flow itself is authored and published in Meta's Flow Builder —
+ * we only address it. So this form collects the three identifiers that
+ * addressing needs (Flow id, entry screen, button label) plus the
+ * message wrapped around the button.
+ *
+ * ponytail: no live validation against Meta's Graph API. A wrong Flow
+ * id fails at send time with Meta's own error. Add a "Verify" button
+ * calling GET /<flow_id> if that turns out to bite people.
+ */
+function SendFormForm({
+  cfg,
+  allNodes,
+  currentKey,
+  onUpdateConfig,
+  showAdvanced,
+  t,
+}: {
+  cfg: SendFormCfg;
+  allNodes: BuilderNode[];
+  currentKey: string;
+  onUpdateConfig: (patch: Record<string, unknown>) => void;
+  showAdvanced: boolean;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  const cta = cfg.cta_label ?? "";
+  return (
+    <>
+      <TextRow
+        label={t("bodyText")}
+        value={cfg.body_text ?? ""}
+        onChange={(v) => onUpdateConfig({ body_text: v })}
+        rows={2}
+      />
+      <div>
+        <label className="mb-1 block text-xs text-muted-foreground">
+          {t("metaFlowIdLabel")}
+        </label>
+        <Input
+          value={cfg.meta_flow_id ?? ""}
+          onChange={(e) =>
+            onUpdateConfig({ meta_flow_id: e.target.value.trim() })
+          }
+          placeholder="1234567890123456"
+          className="bg-muted font-mono"
+        />
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          {t("metaFlowIdHint")}
+        </p>
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-muted-foreground">
+          {t("screenIdLabel")}
+        </label>
+        <Input
+          value={cfg.screen_id ?? ""}
+          onChange={(e) => onUpdateConfig({ screen_id: e.target.value.trim() })}
+          placeholder="WELCOME"
+          className="bg-muted font-mono"
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-muted-foreground">
+          {t("ctaLabelLabel")}
+        </label>
+        <Input
+          value={cta}
+          maxLength={CTA_MAX}
+          onChange={(e) => onUpdateConfig({ cta_label: e.target.value })}
+          placeholder="Start"
+          className="bg-muted"
+        />
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          {cta.length}/{CTA_MAX}
+        </p>
+      </div>
+      <NextNodeRow
+        label={t("afterSubmit")}
+        value={cfg.next_node_key ?? ""}
+        allNodes={allNodes}
+        currentKey={currentKey}
+        onChange={(v) => onUpdateConfig({ next_node_key: v })}
+      />
+      {showAdvanced ? (
+        <>
+          <TextRow
+            label={t("headerText")}
+            value={cfg.header_text ?? ""}
+            onChange={(v) => onUpdateConfig({ header_text: v })}
+          />
+          <TextRow
+            label={t("footerText")}
+            value={cfg.footer_text ?? ""}
+            onChange={(v) => onUpdateConfig({ footer_text: v })}
+          />
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              {t("varPrefixLabel")}
+            </label>
+            <Input
+              value={cfg.var_prefix ?? ""}
+              onChange={(e) =>
+                onUpdateConfig({
+                  var_prefix: e.target.value.replace(/[^a-zA-Z0-9_]/g, ""),
+                })
+              }
+              placeholder="quote_"
+              className="bg-muted font-mono"
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {t("varPrefixHint")}
+            </p>
+          </div>
+        </>
+      ) : null}
+    </>
+  );
 }
 
 // ============================================================

@@ -9,6 +9,86 @@ Versions follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Pre-1.0, `MINOR` bumps cover new modules; `PATCH` bumps cover bug fixes
 and polish.
 
+## [0.10.1] — 2026-09-02
+
+### Fixed
+
+- **A tap on a finished flow's menu no longer does nothing.** The
+  message we send stays in the customer's chat forever, so a
+  buttons/list prompt is still tappable after the run that sent it
+  ended. That tap found no *active* run, fell through to the entry
+  trigger — which a row title like "Aluminium" never matches — and was
+  dropped in silence.
+
+  Reported from a live flow: a material list where Glass declines and
+  walks to an `end` node. The customer taps Glass, gets the polite
+  decline, then taps a metal from the same list and nothing happens.
+  It was never glass-specific — every ending had it, including the
+  normal handoff path.
+
+  A tap that matches an option on the last prompt of a run that ended
+  within 24h now revives that run and advances down the tapped branch.
+  The window matches WhatsApp's customer-service window: outside it a
+  reply needs a paid template the runner cannot send, so reviving a run
+  we then could not talk on would strand the customer mid-flow.
+
+  Only runs that ended on their own terms are revived — `completed` and
+  `timed_out`. A `handed_off` or `paused_by_agent` run is left alone: a
+  human owns that thread, and the bot cutting back in mid-conversation
+  is worse than an inert tap, which still lands in the inbox as a
+  normal message. `failed` is excluded too — reopening walks straight
+  back into whatever broke. A run whose flow has since been paused or
+  archived is not revived either.
+
+## [0.10.0] — 2026-08-31
+
+Native WhatsApp Flows: collect a form's worth of answers in one
+message instead of six.
+
+> **Migration required:** apply `supabase/migrations/043_flow_send_form.sql`
+> (adds `send_form` to the `flow_nodes.node_type` CHECK).
+
+### Added
+
+- **`send_form` flow node — native WhatsApp Flows.** Publish a Flow in
+  Meta's Flow Builder, paste its ID into the node, and the bot sends
+  one message whose button opens a real form sheet inside WhatsApp:
+  text fields, dropdowns, date pickers, multiple screens, validated
+  before submit. Meta delivers every answer in a single `nfm_reply`
+  webhook, which lands in `flow_runs.vars` exactly like a
+  `collect_input` capture — so conditions, handoff notes, and every
+  other downstream node read it unchanged.
+
+  Replaces a chain of `collect_input` prompts, which asked one question
+  per message and gave the customer six chances to wander off.
+
+  An optional variable prefix keeps two forms in one flow from
+  overwriting each other's fields, and Meta's echoed `flow_token` is
+  stripped rather than stored as an answer.
+
+  Static Flows only — `flow_action: navigate`. Dynamic Flows
+  (`data_exchange`, for dropdowns populated from live data or
+  server-side validation) need a registered RSA keypair and a
+  decrypting endpoint, and are deliberately out of scope.
+
+  No `whatsapp_forms` registry table: like every other node, the config
+  lives in `flow_nodes.config` JSONB. Reusing one form across flows
+  means pasting the ID again — cheaper than a table with RLS, routes,
+  and a settings screen.
+
+### Fixed
+
+- **AI auto-reply no longer answers Meta's boilerplate.** The gate
+  excluded interactive taps but not form submissions, whose message
+  text is Meta's localized "Sent" line — the LLM would have replied to
+  that as though the customer had typed it. Found by the test written
+  alongside the feature.
+
+- **CI now verifies migration 042 actually applied.** Its column is
+  `ADD COLUMN IF NOT EXISTS` and its backfill a plain `UPDATE`, the
+  exact shape `verify-schema.sql` exists to catch, and it shipped
+  without an assertion.
+
 ## [0.9.0] — 2026-08-30
 
 Inbox triage: the customer can see you read them, you can see who is

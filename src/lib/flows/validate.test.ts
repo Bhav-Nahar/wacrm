@@ -547,3 +547,91 @@ describe("reachableFromEntry", () => {
     expect(set).toEqual(new Set(["a", "b"]));
   });
 });
+
+// ============================================================
+// send_form — native WhatsApp Flow node
+// ============================================================
+
+const formFlow = {
+  name: "Quote",
+  trigger_type: "keyword" as const,
+  trigger_config: { keywords: ["quote"] },
+  entry_node_id: "start",
+};
+
+function formNodes(config: Record<string, unknown>) {
+  return [
+    { node_key: "start", node_type: "start", config: { next_node_key: "f" } },
+    { node_key: "f", node_type: "send_form", config },
+    { node_key: "done", node_type: "end", config: {} },
+  ];
+}
+
+const validFormConfig = {
+  body_text: "Tap below for a quote",
+  meta_flow_id: "1234567890123456",
+  cta_label: "Start",
+  screen_id: "WELCOME",
+  next_node_key: "done",
+};
+
+function fieldsFlagged(config: Record<string, unknown>): string[] {
+  return validateFlowForActivation(formFlow, formNodes(config))
+    .filter((i) => i.node_key === "f")
+    .map((i) => i.field ?? "");
+}
+
+describe("validateFlowForActivation — send_form", () => {
+  it("accepts a fully configured form node", () => {
+    expect(fieldsFlagged(validFormConfig)).toEqual([]);
+  });
+
+  it("flags a missing Flow id", () => {
+    expect(fieldsFlagged({ ...validFormConfig, meta_flow_id: "" })).toContain(
+      "meta_flow_id",
+    );
+  });
+
+  it("flags a missing entry screen", () => {
+    expect(fieldsFlagged({ ...validFormConfig, screen_id: "  " })).toContain(
+      "screen_id",
+    );
+  });
+
+  it("flags a missing body", () => {
+    expect(fieldsFlagged({ ...validFormConfig, body_text: "" })).toContain(
+      "body_text",
+    );
+  });
+
+  it("flags a CTA label past Meta's 20-char button limit", () => {
+    expect(
+      fieldsFlagged({ ...validFormConfig, cta_label: "x".repeat(21) }),
+    ).toContain("cta_label");
+  });
+
+  it("flags a var_prefix that would not survive interpolation", () => {
+    expect(
+      fieldsFlagged({ ...validFormConfig, var_prefix: "2-bad" }),
+    ).toContain("var_prefix");
+  });
+
+  it("accepts a well-formed var_prefix", () => {
+    expect(fieldsFlagged({ ...validFormConfig, var_prefix: "quote_" })).toEqual(
+      [],
+    );
+  });
+
+  it("flags a next node that does not exist", () => {
+    expect(
+      fieldsFlagged({ ...validFormConfig, next_node_key: "ghost" }),
+    ).toContain("next_node_key");
+  });
+
+  it("treats the form's next_node_key as a real edge for reachability", () => {
+    // Without send_form in outgoingEdges, "done" would look orphaned.
+    expect(reachableFromEntry("start", formNodes(validFormConfig))).toContain(
+      "done",
+    );
+  });
+});

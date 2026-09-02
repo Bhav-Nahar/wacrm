@@ -127,6 +127,30 @@ export interface HandoffNodeConfig {
  * builder still surfaces the field so users can author flows that
  * v2 will start enforcing.
  */
+export interface SendFormNodeConfig {
+  /** Body text shown above the button that opens the form. */
+  body_text: string;
+  /** The published Flow's id, copied from Meta's Flow Builder. */
+  meta_flow_id: string;
+  /** Label on the button that opens the form (≤ 20 chars). */
+  cta_label: string;
+  /** Entry screen of the Flow, e.g. "WELCOME". */
+  screen_id: string;
+  /** Optional plain-text header (≤ 60 chars). */
+  header_text?: string;
+  /** Optional grey footer line (≤ 60 chars). */
+  footer_text?: string;
+  /**
+   * Prefix applied to every key from the submission before it lands in
+   * `flow_runs.vars`. Two forms in one flow both answering "email"
+   * would otherwise clobber each other. Empty means store the keys as
+   * Meta returns them.
+   */
+  var_prefix?: string;
+  /** Node to advance to once the customer submits. */
+  next_node_key: string;
+}
+
 export interface CollectInputNodeConfig {
   /** Prompt text sent to the customer before they reply. */
   prompt_text: string;
@@ -202,6 +226,7 @@ export type FlowNodeConfig =
   | { node_type: "send_list"; config: SendListNodeConfig }
   | { node_type: "send_media"; config: SendMediaNodeConfig }
   | { node_type: "collect_input"; config: CollectInputNodeConfig }
+  | { node_type: "send_form"; config: SendFormNodeConfig }
   | { node_type: "condition"; config: ConditionNodeConfig }
   | { node_type: "set_tag"; config: SetTagNodeConfig }
   | { node_type: "handoff"; config: HandoffNodeConfig }
@@ -366,6 +391,21 @@ export type ParsedInbound =
       reply_id: string;
       /** The visible title of the tapped option (for logging). */
       reply_title: string;
+      meta_message_id: string;
+    }
+  | {
+      kind: "form_reply";
+      /**
+       * The customer's submitted fields, decoded from the `nfm_reply`
+       * `response_json`. Values are whatever Meta's Flow produced —
+       * strings for text inputs, arrays for multi-select.
+       */
+      response: Record<string, unknown>;
+      /**
+       * The `flow_token` we set when sending. Carries the flow_run id,
+       * letting a submission be matched to its run.
+       */
+      flow_token: string | null;
       meta_message_id: string;
     };
 

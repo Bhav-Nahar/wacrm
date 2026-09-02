@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  captureFormVars,
   matchReplyId,
   matchesKeywordTrigger,
   isAutoAdvancing,
@@ -161,6 +162,10 @@ describe("node classification helpers", () => {
     expect(isSuspending("send_buttons")).toBe(true);
     expect(isSuspending("send_list")).toBe(true);
     expect(isSuspending("collect_input")).toBe(true);
+    // A form node waits for the submission, exactly like a button node
+    // waits for a tap — if this regresses the runner walks straight
+    // past the form and the customer never gets asked.
+    expect(isSuspending("send_form")).toBe(true);
     expect(isSuspending("start")).toBe(false);
     expect(isSuspending("send_message")).toBe(false);
     expect(isSuspending("condition")).toBe(false);
@@ -295,5 +300,45 @@ describe("evaluateConditionPredicate", () => {
         configValue: "anything",
       }),
     ).toBe(false);
+  });
+});
+
+// ============================================================
+// captureFormVars — native Flow submission → flow_runs.vars
+// ============================================================
+
+describe("captureFormVars", () => {
+  it("keeps every submitted field", () => {
+    expect(
+      captureFormVars({ name: "Priya", email: "p@example.com" }),
+    ).toEqual({ name: "Priya", email: "p@example.com" });
+  });
+
+  it("drops Meta's echoed flow_token — it is not an answer", () => {
+    expect(
+      captureFormVars({ flow_token: "run-abc", name: "Priya" }),
+    ).toEqual({ name: "Priya" });
+  });
+
+  it("applies the prefix so two forms in one flow don't collide", () => {
+    expect(
+      captureFormVars({ email: "a@b.com" }, "quote_"),
+    ).toEqual({ quote_email: "a@b.com" });
+  });
+
+  it("prefixes nothing when the prefix is empty", () => {
+    expect(captureFormVars({ email: "a@b.com" }, "")).toEqual({
+      email: "a@b.com",
+    });
+  });
+
+  it("preserves non-string values (multi-select arrays, numbers)", () => {
+    expect(
+      captureFormVars({ services: ["seo", "ads"], budget: 50000 }),
+    ).toEqual({ services: ["seo", "ads"], budget: 50000 });
+  });
+
+  it("returns an empty object for an all-informational form", () => {
+    expect(captureFormVars({ flow_token: "run-abc" })).toEqual({});
   });
 });

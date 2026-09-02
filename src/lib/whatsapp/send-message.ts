@@ -380,6 +380,16 @@ export async function sendMessageToConversation(
         });
         return result.messageId;
       }
+      // Same as the automations sender: only the two composer-authorable
+      // kinds reach here. A `form` payload comes from a flow's
+      // send_form node, which sends through `engineSendForm` instead.
+      if (p.kind !== 'list') {
+        throw new SendMessageError(
+          'bad_request',
+          `Unsupported interactive payload kind "${p.kind}".`,
+          400,
+        );
+      }
       const result = await sendInteractiveList({
         phoneNumberId: config.phone_number_id,
         accessToken,
