@@ -182,14 +182,6 @@ DECLARE
                 },
                 {
                     "config": {
-                    },
-                    "node_key": "end_lost",
-                    "node_type": "end",
-                    "position_x": 0,
-                    "position_y": 600
-                },
-                {
-                    "config": {
                         "text": "Hello! 👋 Thanks for reaching out.\n\nWe build fiber laser cutting machines. I'll ask two quick questions so I can point you to the right setup and get a specialist on this.",
                         "next_node_key": "ask_material"
                     },
@@ -231,7 +223,7 @@ DECLARE
                     "config": {
                         "mode": "add",
                         "tag_id": "714fc74b-5083-4fc6-a899-3e0d04ee9b82",
-                        "next_node_key": "end_lost"
+                        "next_node_key": "ask_material"
                     },
                     "node_key": "tag_not_fit",
                     "tag_name": "Not a fit",
