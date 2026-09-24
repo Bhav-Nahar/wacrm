@@ -7,6 +7,7 @@ import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { reopenClosedConversation } from '@/lib/conversations/reopen'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
+import { forwardWebhook, needsForward } from '@/lib/whatsapp/forward-webhook'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
@@ -245,6 +246,11 @@ export async function POST(request: Request) {
   // maxDuration).
   after(async () => {
     try {
+      await relayIfForeign(body, rawBody, signature)
+    } catch (error) {
+      console.error('Error relaying webhook:', error)
+    }
+    try {
       await processWebhook(body)
     } catch (error) {
       console.error('Error processing webhook:', error)
@@ -252,6 +258,38 @@ export async function POST(request: Request) {
   })
 
   return NextResponse.json({ status: 'received' }, { status: 200 })
+}
+
+// Events for numbers onboarded through the other app on this Meta app (see
+// forward-webhook.ts). One indexed-table read per delivery, only when the
+// relay is configured.
+async function relayIfForeign(
+  body: { entry?: WhatsAppWebhookEntry[] },
+  rawBody: string,
+  signature: string | null,
+) {
+  const url = process.env.WHATSAPP_WEBHOOK_FORWARD_URL?.trim()
+  if (!url || !body.entry?.length) return
+
+  const { data: rows, error } = await supabaseAdmin()
+    .from('whatsapp_config')
+    .select('phone_number_id, waba_id')
+  if (error || !rows) {
+    // Can't tell what's ours — forward. The receiver ignores what it doesn't
+    // own, so a spare copy costs nothing; a dropped one loses an opt-out.
+    console.error('[webhook-forward] config lookup failed, forwarding anyway:', error)
+    await forwardWebhook(url, rawBody, signature)
+    return
+  }
+  const phoneIds = new Set<string>()
+  const wabaIds = new Set<string>()
+  for (const r of rows as { phone_number_id: string | null; waba_id: string | null }[]) {
+    if (r.phone_number_id) phoneIds.add(String(r.phone_number_id))
+    if (r.waba_id) wabaIds.add(String(r.waba_id))
+  }
+  if (needsForward(body, phoneIds, wabaIds)) {
+    await forwardWebhook(url, rawBody, signature)
+  }
 }
 
 async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
@@ -306,7 +344,13 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
       }
 
       if (!configRows || configRows.length === 0) {
-        console.error('No config found for phone_number_id:', phoneNumberId)
+        // With the relay on, a number we don't own is the other app's and was
+        // forwarded in relayIfForeign — routine, not an error.
+        if (process.env.WHATSAPP_WEBHOOK_FORWARD_URL?.trim()) {
+          console.info('[webhook] phone_number_id not ours, relayed:', phoneNumberId)
+        } else {
+          console.error('No config found for phone_number_id:', phoneNumberId)
+        }
         continue
       }
 
