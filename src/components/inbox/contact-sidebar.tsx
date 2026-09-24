@@ -21,6 +21,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
 import { useTranslations } from "next-intl";
 import { formatPhoneForDisplay } from "@/lib/whatsapp/phone-utils";
+import { contactHandle } from "@/lib/whatsapp/wa-identity";
 
 interface ContactSidebarProps {
   contact: Contact | null;
@@ -81,8 +82,11 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   }, [fetchContactData]);
 
   const handleCopyPhone = useCallback(async () => {
-    if (!contact?.phone) return;
-    await navigator.clipboard.writeText(contact.phone);
+    // Copies whatever the row displays — a BSUID-only contact has no
+    // phone number to copy, but its @username still identifies them.
+    const handle = contact ? contactHandle(contact) : '';
+    if (!handle) return;
+    await navigator.clipboard.writeText(handle);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     // Dep is the whole `contact` object (not `contact?.phone`) so the
@@ -126,7 +130,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   // state gets the full width and reads as one deliberate screen.
   if (!contact) return null;
 
-  const displayName = contact.name || contact.phone;
+  const displayName = contact.name || contactHandle(contact);
   const initials = displayName.charAt(0).toUpperCase();
 
   return (
@@ -161,7 +165,11 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted"
             >
               <Phone className="h-4 w-4 text-muted-foreground" />
-              <span className="flex-1 text-left">{formatPhoneForDisplay(contact.phone)}</span>
+              <span className="flex-1 text-left">
+                {contact.phone?.trim()
+                  ? formatPhoneForDisplay(contact.phone)
+                  : contactHandle(contact)}
+              </span>
               {copied ? (
                 <Check className="h-3 w-3 text-primary" />
               ) : (

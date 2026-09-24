@@ -411,9 +411,7 @@ export function FlowEditorProvider({
 
   // ---- Delete ----
   const deleteFlow = useCallback(async () => {
-    const yes = window.confirm(
-      `Delete "${state.name}"? Any active runs end immediately. This can't be undone.`,
-    );
+    const yes = window.confirm(t("deleteConfirm", { name: state.name }));
     if (!yes) return;
     try {
       const res = await fetch(`/api/flows/${initialFlow.id}`, {
@@ -425,7 +423,7 @@ export function FlowEditorProvider({
       const msg = err instanceof Error ? err.message : "Delete failed";
       toast.error(msg);
     }
-  }, [initialFlow.id, router, state.name]);
+  }, [initialFlow.id, router, state.name, t]);
 
   // ---- Node mutations ----
   const updateNode = useCallback(
@@ -484,7 +482,7 @@ export function FlowEditorProvider({
   const addNode = useCallback(
     (type: NodeType): string => {
       const meta = NODE_META[type];
-      const base = slugify(meta.label, type);
+      const base = slugify(meta.slugSeed, type);
       let createdKey = base;
       setState((s) => {
         const node_key = uniqueNodeKey(base, s.nodes);
