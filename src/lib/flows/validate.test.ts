@@ -635,3 +635,87 @@ describe("validateFlowForActivation — send_form", () => {
     );
   });
 });
+
+// ============================================================
+// send_form — forms authored inside wacrm
+// ============================================================
+
+import { formFieldsSignature, type FormField } from "@/lib/whatsapp/flow-json";
+
+const GEN_FIELDS: FormField[] = [
+  { name: "full_name", label: "Your name", type: "text", required: true },
+  { name: "email", label: "Email", type: "email", required: true },
+];
+
+function generatedFormConfig(over: Record<string, unknown> = {}) {
+  return {
+    body_text: "Tap below",
+    meta_flow_id: "1234567890123456",
+    cta_label: "Open form",
+    screen_id: "FORM",
+    next_node_key: "done",
+    form_fields: GEN_FIELDS,
+    submit_label: "Submit",
+    // Matching signature = published and up to date.
+    published_signature: formFieldsSignature(GEN_FIELDS, "Submit", undefined),
+    ...over,
+  };
+}
+
+describe("validateFlowForActivation — generated send_form", () => {
+  it("accepts a published, up-to-date generated form", () => {
+    expect(fieldsFlagged(generatedFormConfig())).toEqual([]);
+  });
+
+  it("blocks activation when the fields changed since publishing", () => {
+    // The dangerous case: meta_flow_id still points at the OLD Flow, so
+    // customers would be sent a form the author no longer sees.
+    const edited = [...GEN_FIELDS, { name: "budget", label: "Budget", type: "text" as const }];
+    const flagged = fieldsFlagged(generatedFormConfig({ form_fields: edited }));
+    expect(flagged).toContain("form_fields");
+  });
+
+  it("blocks activation when the form was never published", () => {
+    const flagged = fieldsFlagged(
+      generatedFormConfig({ published_signature: undefined }),
+    );
+    expect(flagged).toContain("form_fields");
+  });
+
+  it("surfaces field-shape problems, not just the publish state", () => {
+    const bad = [{ name: "not a name", label: "X", type: "text" as const }];
+    const flagged = fieldsFlagged(
+      generatedFormConfig({
+        form_fields: bad,
+        published_signature: formFieldsSignature(bad, "Submit", undefined),
+      }),
+    );
+    expect(flagged).toContain("form_fields");
+  });
+
+  it("leaves a hand-pasted form alone — no form_fields means nothing to publish", () => {
+    // The original path: an ID copied from Meta's Flow Builder, whose
+    // real field list we cannot see.
+    expect(
+      fieldsFlagged({
+        body_text: "Tap below",
+        meta_flow_id: "1234567890123456",
+        cta_label: "Open form",
+        screen_id: "WELCOME",
+        next_node_key: "done",
+      }),
+    ).toEqual([]);
+  });
+
+  it("still requires a Flow id when there are no fields either", () => {
+    expect(
+      fieldsFlagged({
+        body_text: "Tap below",
+        meta_flow_id: "",
+        cta_label: "Open form",
+        screen_id: "WELCOME",
+        next_node_key: "done",
+      }),
+    ).toContain("meta_flow_id");
+  });
+});

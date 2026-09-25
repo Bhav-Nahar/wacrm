@@ -23,6 +23,11 @@
  * `node_key`; trigger-scoped use `scope: 'trigger'`.
  */
 
+import {
+  formFieldsSignature,
+  validateFormFields,
+  type FormField,
+} from "@/lib/whatsapp/flow-json";
 import { INTERACTIVE_LIMITS } from "@/lib/whatsapp/meta-api";
 
 export interface ValidationIssue {
@@ -540,7 +545,49 @@ function validateNode(
         screen_id?: string;
         var_prefix?: string;
         next_node_key?: string;
+        form_fields?: FormField[];
+        submit_label?: string;
+        form_title?: string;
+        published_signature?: string;
       };
+
+      // A form authored here must have been published to Meta before
+      // the flow goes live. Publishing is what turns the field list
+      // into a real Flow; without it meta_flow_id is either empty or —
+      // worse — points at the PREVIOUS version, so customers would be
+      // sent a form that no longer matches what the author sees.
+      if (cfg.form_fields && cfg.form_fields.length > 0) {
+        const shape = validateFormFields(
+          cfg.form_fields,
+          cfg.submit_label || "Submit",
+        );
+        if (!shape.ok) {
+          for (const message of shape.errors) {
+            issues.push({
+              severity: "error",
+              scope: "node",
+              node_key: node.node_key,
+              field: "form_fields",
+              message,
+            });
+          }
+        }
+        const current = formFieldsSignature(
+          cfg.form_fields,
+          cfg.submit_label || "Submit",
+          cfg.form_title,
+        );
+        if (current !== cfg.published_signature) {
+          issues.push({
+            severity: "error",
+            scope: "node",
+            node_key: node.node_key,
+            field: "form_fields",
+            message:
+              "The form's fields changed since it was last created in WhatsApp. Use \"Update form in WhatsApp\" before activating, or customers will get the old version.",
+          });
+        }
+      }
       if (!cfg.body_text?.trim()) {
         issues.push({
           severity: "error",
@@ -557,7 +604,7 @@ function validateNode(
           node_key: node.node_key,
           field: "meta_flow_id",
           message:
-            "Send-form needs the Flow id from Meta's Flow Builder.",
+            "Send-form has no WhatsApp form yet. Add fields and use \"Create form in WhatsApp\", or paste a Flow id from Meta's Flow Builder.",
         });
       }
       if (!cfg.screen_id?.trim()) {
@@ -567,7 +614,7 @@ function validateNode(
           node_key: node.node_key,
           field: "screen_id",
           message:
-            "Send-form needs the entry screen id of the Flow (e.g. WELCOME).",
+            "Send-form needs the Flow's entry screen id. Creating the form here fills this in automatically; a hand-pasted Flow needs it typed (e.g. WELCOME).",
         });
       }
       if (!cfg.cta_label?.trim()) {

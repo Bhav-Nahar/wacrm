@@ -49,3 +49,6 @@ supabase/.temp/
 
 # Stray screenshots
 Screenshot*.png
+
+# one-off flow ops SQL — local only (see f7edbf4)
+supabase/ops/

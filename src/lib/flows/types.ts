@@ -22,6 +22,13 @@
 // Node configs (discriminated union by node_type)
 // ============================================================
 
+// A generated form's field list is authored in the WhatsApp layer
+// (flow-json.ts owns the Meta Flow JSON schema); re-exported so flow
+// consumers can stay inside this module.
+import type { FormField } from "@/lib/whatsapp/flow-json";
+
+export type { FormField };
+
 export interface StartNodeConfig {
   /** Stable node_key of the first real node to advance to. */
   next_node_key: string;
@@ -130,8 +137,33 @@ export interface HandoffNodeConfig {
 export interface SendFormNodeConfig {
   /** Body text shown above the button that opens the form. */
   body_text: string;
-  /** The published Flow's id, copied from Meta's Flow Builder. */
+  /**
+   * The published Flow's id.
+   *
+   * Two ways this gets filled: pasted from Meta's Flow Builder (the
+   * original path), or written by /api/whatsapp/forms/publish when the
+   * user authors `form_fields` here and we generate the Flow for them.
+   */
   meta_flow_id: string;
+  /**
+   * Fields the user authored in wacrm. Present only for generated
+   * forms; a hand-pasted `meta_flow_id` leaves this empty because the
+   * Flow's real shape lives in Meta and we cannot see it.
+   */
+  form_fields?: FormField[];
+  /** Footer button label inside the form sheet. Meta caps it at 35. */
+  submit_label?: string;
+  /** Optional heading above the inputs. */
+  form_title?: string;
+  /**
+   * Signature of the field list at the moment we last published.
+   *
+   * A published Flow is immutable — Meta allows deprecate, never edit.
+   * Comparing this against the current fields is how we know whether a
+   * save actually needs a new Flow minted, instead of burning one on
+   * every keystroke-triggered save.
+   */
+  published_signature?: string;
   /** Label on the button that opens the form (≤ 20 chars). */
   cta_label: string;
   /** Entry screen of the Flow, e.g. "WELCOME". */
